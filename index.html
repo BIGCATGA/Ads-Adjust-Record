@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="th" data-theme="">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ads Adjust Record — บันทึกการปรับ Google Ads</title>
+<meta name="description" content="บันทึกการปรับแต่งแคมเปญ Google Ads พร้อมเปรียบเทียบผลก่อน/หลังปรับ">
+<link rel="stylesheet" href="assets/styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%232a78d6'/><path d='M8 22 L13 14 L18 18 L24 9' stroke='white' stroke-width='2.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+</head>
+<body>
+
+<header class="app-header">
+  <div class="header-row">
+    <div class="brand">
+      <div class="brand-mark">AR</div>
+      <div>
+        <h1>Ads Adjust Record</h1>
+        <span class="brand-sub">บันทึกการปรับแต่งแคมเปญ Google Ads</span>
+      </div>
+    </div>
+    <span class="status-pill" id="connStatus"><span class="dot"></span><span id="connText">กำลังตรวจสอบ…</span></span>
+    <button class="btn btn-sm" id="themeToggle" title="สลับโหมดสว่าง/มืด" aria-label="สลับธีม">◐</button>
+    <button class="btn btn-sm" id="refreshBtn" title="โหลดข้อมูลใหม่">↻ รีเฟรช</button>
+  </div>
+  <nav class="tabs" role="tablist" aria-label="เมนูหลัก">
+    <button class="tab" role="tab" id="tab-new"       aria-controls="panel-new"       aria-selected="true">➕ บันทึกใหม่</button>
+    <button class="tab" role="tab" id="tab-timeline"  aria-controls="panel-timeline"  aria-selected="false">📋 ไทม์ไลน์</button>
+    <button class="tab" role="tab" id="tab-dashboard" aria-controls="panel-dashboard" aria-selected="false">📊 แดชบอร์ด</button>
+    <button class="tab" role="tab" id="tab-trend"     aria-controls="panel-trend"     aria-selected="false">📈 กราฟเทรนด์</button>
+    <button class="tab" role="tab" id="tab-data"      aria-controls="panel-data"      aria-selected="false">⚙️ นำเข้า / ตั้งค่า</button>
+  </nav>
+</header>
+
+<main>
+
+<!-- ══════════════ 1. บันทึกใหม่ ══════════════ -->
+<section class="panel" id="panel-new" role="tabpanel" aria-labelledby="tab-new">
+  <div id="setupBanner"></div>
+
+  <form id="recordForm" autocomplete="off">
+    <input type="hidden" id="f_id">
+
+    <div class="card">
+      <div class="card-head">
+        <h2 id="formTitle">บันทึกการปรับใหม่</h2>
+        <span class="card-note" id="formHint"></span>
+      </div>
+
+      <div class="grid grid-3">
+        <label class="field">
+          <span class="field-label">วันที่ปรับ</span>
+          <input type="date" id="f_date" required>
+        </label>
+        <label class="field">
+          <span class="field-label">แคมเปญ</span>
+          <input type="text" id="f_campaign" list="campaignList" placeholder="เช่น 15Search-Speaker" required>
+          <datalist id="campaignList"></datalist>
+        </label>
+        <label class="field">
+          <span class="field-label">Ad group <span class="field-unit">(ไม่บังคับ)</span></span>
+          <input type="text" id="f_ad_group" placeholder="เช่น Speaker-Brand">
+        </label>
+      </div>
+
+      <div class="grid grid-3" style="margin-top:12px">
+        <label class="field">
+          <span class="field-label">สินค้า
+            <span class="auto-badge" id="badge_product_auto" hidden>เดาจากชื่อแคมเปญ</span></span>
+          <select id="f_product"></select>
+        </label>
+        <label class="field">
+          <span class="field-label">ช่องทาง
+            <span class="auto-badge" id="badge_channel_auto" hidden>เดาจากชื่อแคมเปญ</span></span>
+          <select id="f_channel"></select>
+        </label>
+        <div class="field">
+          <span class="field-label">กลุ่มสินค้า <span class="field-unit">(ตามสินค้าที่เลือก)</span></span>
+          <div class="readonly-box" id="f_group_view">—</div>
+        </div>
+      </div>
+      <p class="card-note" id="campaignHint" style="margin-top:8px"></p>
+
+      <div class="section-label">ปรับอะไรบ้าง</div>
+      <div class="chips" id="tagChips"></div>
+      <label class="field" style="margin-top:10px">
+        <span class="field-label">รายละเอียดสิ่งที่ปรับ</span>
+        <textarea id="f_change_detail" rows="4" placeholder='เช่น&#10;เพิ่ม Keywords&#10;"ซื้อ ลำโพง bose"&#10;"ลำโพง jbl ราคา"&#10;เพิ่ม negative: "ซ่อม", "มือสอง"' required></textarea>
+      </label>
+
+      <div class="grid grid-2" style="margin-top:12px">
+        <label class="field">
+          <span class="field-label">เหตุผล / สิ่งที่สังเกตเห็น</span>
+          <textarea id="f_reason" rows="3" placeholder="เช่น Impression เพิ่มขึ้น แต่ conversion ลดลง สงสัยว่า keyword กว้างเกินไป"></textarea>
+        </label>
+        <label class="field">
+          <span class="field-label">ผลที่คาดหวัง</span>
+          <textarea id="f_expected" rows="3" placeholder="เช่น Impression Share ขึ้นไปถึง 85% และ CPA ต่ำกว่า 100 บาท"></textarea>
+        </label>
+      </div>
+    </div>
+
+    <!-- ผลก่อนปรับ -->
+    <div class="card">
+      <div class="card-head">
+        <h2>ผลก่อนปรับ</h2>
+        <span class="card-note" id="beforeAutoNote"></span>
+        <button type="button" class="btn btn-sm" id="pullPrevBtn">↧ ดึงจากบันทึกล่าสุด</button>
+      </div>
+      <div class="grid grid-4" id="beforeFields"></div>
+      <div class="card-note" style="margin-top:10px" id="beforeDerived"></div>
+    </div>
+
+    <!-- ผลหลังปรับ -->
+    <div class="card">
+      <div class="card-head">
+        <h2>ผลหลังปรับ</h2>
+        <span class="card-note">ปล่อยว่างไว้ก่อนได้ — ค่อยกลับมากรอกทีหลังเมื่อรันครบช่วง (หรือระบบจะเติมให้เองตอนบันทึกครั้งถัดไป)</span>
+      </div>
+      <div class="grid grid-4" id="afterFields"></div>
+      <div class="card-note" style="margin-top:10px" id="afterDerived"></div>
+      <label class="field" style="margin-top:12px">
+        <span class="field-label">สรุปผลที่เกิดขึ้นจริง <span class="field-unit">(ไม่บังคับ)</span></span>
+        <textarea id="f_result_note" rows="2" placeholder="เช่น CPA ลดลงตามคาด แต่ Impression Share ยังไม่ถึงเป้า"></textarea>
+      </label>
+    </div>
+
+    <div id="livePreview"></div>
+
+    <div class="btn-row">
+      <button type="submit" class="btn btn-primary" id="saveBtn">💾 บันทึก</button>
+      <button type="button" class="btn" id="resetBtn">ล้างฟอร์ม</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn btn-danger" id="deleteBtn" hidden>ลบบันทึกนี้</button>
+    </div>
+  </form>
+</section>
+
+<!-- ══════════════ 2. ไทม์ไลน์ ══════════════ -->
+<section class="panel" id="panel-timeline" role="tabpanel" aria-labelledby="tab-timeline" hidden>
+  <div class="filterbar">
+    <div class="field" style="flex:0 0 auto">
+      <span class="field-label">ช่วงเวลา</span>
+      <div class="presets" id="rangePresets"></div>
+    </div>
+    <label class="field">
+      <span class="field-label">ตั้งแต่</span>
+      <input type="date" id="flt_from">
+    </label>
+    <label class="field">
+      <span class="field-label">ถึง</span>
+      <input type="date" id="flt_to">
+    </label>
+    <label class="field">
+      <span class="field-label">กลุ่มสินค้า</span>
+      <select id="flt_group"><option value="">ทั้งหมด</option></select>
+    </label>
+    <label class="field">
+      <span class="field-label">สินค้า</span>
+      <select id="flt_product"><option value="">ทั้งหมด</option></select>
+    </label>
+    <label class="field">
+      <span class="field-label">ช่องทาง</span>
+      <select id="flt_channel"><option value="">ทั้งหมด</option></select>
+    </label>
+    <label class="field">
+      <span class="field-label">แคมเปญ</span>
+      <select id="flt_campaign"><option value="">ทั้งหมด</option></select>
+    </label>
+    <label class="field" style="flex:1 1 200px">
+      <span class="field-label">ค้นหาข้อความ</span>
+      <input type="text" id="flt_q" placeholder="เช่น negative, bose, headline">
+    </label>
+    <button class="btn btn-sm" id="clearFilters">ล้าง</button>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <h2>สรุปช่วงที่เลือก</h2>
+      <span class="card-note" id="timelineCount"></span>
+    </div>
+    <div class="tiles" id="timelineTiles"></div>
+  </div>
+
+  <div class="timeline" id="timelineList"></div>
+</section>
+
+<!-- ══════════════ 3. แดชบอร์ด ══════════════ -->
+<section class="panel" id="panel-dashboard" role="tabpanel" aria-labelledby="tab-dashboard" hidden>
+  <div class="filterbar">
+    <label class="field" style="min-width:220px">
+      <span class="field-label">เลือกบันทึกที่จะดูผลก่อน/หลัง</span>
+      <select id="dashRecord"></select>
+    </label>
+    <label class="field">
+      <span class="field-label">วิธีเทียบ</span>
+      <select id="dashMode">
+        <option value="auto">อัตโนมัติ (ปรับเป็นต่อวันถ้าช่วงไม่เท่ากัน)</option>
+        <option value="raw">ค่าดิบ (ไม่ปรับ)</option>
+        <option value="perday">ต่อวันเสมอ</option>
+      </select>
+    </label>
+  </div>
+
+  <div id="dashContent"></div>
+
+  <div class="card">
+    <div class="card-head">
+      <h2>เปรียบเทียบรายสินค้า</h2>
+      <span class="card-note">ค่าล่าสุดของแต่ละสินค้า (จากช่วงข้อมูลใหม่สุดที่บันทึกไว้)</span>
+      <label class="field" style="min-width:180px;margin-left:auto">
+        <select id="prodMetric"></select>
+      </label>
+      <label class="field" style="min-width:150px">
+        <select id="prodGroupFilter"><option value="">ทุกกลุ่ม</option></select>
+      </label>
+    </div>
+    <div class="chart-shell" id="prodShell">
+      <svg class="chart" id="prodChart" role="img" aria-label="กราฟแท่งเปรียบเทียบตัวชี้วัดรายสินค้า"></svg>
+      <div class="tooltip" id="prodTooltip" hidden></div>
+    </div>
+    <div class="table-wrap" style="margin-top:14px">
+      <table class="data" id="prodTable">
+        <thead>
+          <tr>
+            <th>สินค้า</th>
+            <th>กลุ่ม</th>
+            <th>แคมเปญ</th>
+            <th>ครั้งที่ปรับ</th>
+            <th>ดีขึ้น</th>
+            <th>CPA ล่าสุด</th>
+            <th>CVR ล่าสุด</th>
+            <th>CTR ล่าสุด</th>
+            <th>IS ล่าสุด</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <h2>ภาพรวมทุกการปรับ</h2>
+      <span class="card-note">เรียงจากใหม่ไปเก่า — ดูว่าการปรับครั้งไหนได้ผลจริง</span>
+    </div>
+    <div class="table-wrap">
+      <table class="data" id="allAdjTable">
+        <thead>
+          <tr>
+            <th>วันที่ / แคมเปญ</th>
+            <th>สิ่งที่ปรับ</th>
+            <th>CPA</th>
+            <th>Conv/วัน</th>
+            <th>CVR</th>
+            <th>CTR</th>
+            <th>IS</th>
+            <th>ผลรวม</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════ 4. กราฟเทรนด์ ══════════════ -->
+<section class="panel" id="panel-trend" role="tabpanel" aria-labelledby="tab-trend" hidden>
+  <div class="filterbar">
+    <label class="field">
+      <span class="field-label">ตัวชี้วัด</span>
+      <select id="trendMetric"></select>
+    </label>
+    <label class="field">
+      <span class="field-label">กลุ่มสินค้า</span>
+      <select id="trendGroup"><option value="">ทั้งหมด</option></select>
+    </label>
+    <label class="field">
+      <span class="field-label">สินค้า</span>
+      <select id="trendProduct"><option value="">ทั้งหมด</option></select>
+    </label>
+    <label class="field">
+      <span class="field-label">ช่องทาง</span>
+      <select id="trendChannel"><option value="">ทั้งหมด</option></select>
+    </label>
+    <label class="field">
+      <span class="field-label">แคมเปญ</span>
+      <select id="trendCampaign"><option value="">ทั้งหมด (สูงสุด 6)</option></select>
+    </label>
+    <label class="field">
+      <span class="field-label">ตั้งแต่</span>
+      <input type="date" id="trend_from">
+    </label>
+    <label class="field">
+      <span class="field-label">ถึง</span>
+      <input type="date" id="trend_to">
+    </label>
+    <label class="field" style="flex:0 0 auto">
+      <span class="field-label">แสดง</span>
+      <div class="chips">
+        <button type="button" class="chip" id="trendMarkers" aria-pressed="true">เส้นวันที่ปรับ</button>
+        <button type="button" class="chip" id="trendTable" aria-pressed="false">ตารางข้อมูล</button>
+      </div>
+    </label>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <h2 id="trendTitle">เทรนด์</h2>
+      <span class="card-note">แต่ละจุด = ช่วงวัดผลหนึ่งช่วง · เส้นประ = วันที่มีการปรับแคมเปญ</span>
+    </div>
+    <div class="chart-shell" id="trendShell">
+      <svg class="chart" id="trendChart" role="img" aria-label="กราฟเทรนด์ตัวชี้วัดตามเวลา"></svg>
+      <div class="tooltip" id="trendTooltip" hidden></div>
+    </div>
+    <div class="legend" id="trendLegend"></div>
+    <div class="table-wrap" id="trendTableWrap" hidden style="margin-top:14px"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <h2>ตัวชี้วัดหลักทั้งหมด</h2>
+      <span class="card-note" id="sparkNote"></span>
+    </div>
+    <div class="spark-grid" id="sparkGrid"></div>
+  </div>
+</section>
+
+<!-- ══════════════ 5. นำเข้า / ตั้งค่า ══════════════ -->
+<section class="panel" id="panel-data" role="tabpanel" aria-labelledby="tab-data" hidden>
+
+  <div class="card">
+    <div class="card-head"><h2>เชื่อมต่อ Google Sheet</h2></div>
+    <p class="card-note">ใส่ URL ของ Apps Script Web App (ลงท้ายด้วย <code>/exec</code>) และรหัสลับที่ตั้งไว้ใน <code>Code.gs</code> — ค่าเหล่านี้เก็บไว้ในเบราว์เซอร์เครื่องนี้เท่านั้น ไม่ถูกอัปขึ้น GitHub</p>
+    <div class="grid grid-2" style="margin-top:12px">
+      <label class="field">
+        <span class="field-label">Web App URL</span>
+        <input type="url" id="cfg_url" placeholder="https://script.google.com/macros/s/AKfy.../exec">
+      </label>
+      <label class="field">
+        <span class="field-label">API Token</span>
+        <input type="password" id="cfg_token" placeholder="รหัสลับเดียวกับใน Code.gs">
+      </label>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-primary" id="cfgSave">บันทึกและทดสอบการเชื่อมต่อ</button>
+      <button class="btn" id="cfgClear">ตัดการเชื่อมต่อ (ใช้แบบออฟไลน์)</button>
+    </div>
+    <div id="cfgResult" style="margin-top:12px"></div>
+    <details class="help">
+      <summary>ยังไม่ได้สร้าง Google Sheet? กดดูขั้นตอน</summary>
+      <div id="setupSteps"></div>
+    </details>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <h2>หมวดหมู่สินค้า</h2>
+      <span class="card-note">กลุ่มสินค้า → สินค้า · ใช้เป็นตัวเลือกในฟอร์มและตัวกรองทุกหน้า</span>
+    </div>
+    <div class="grid grid-2">
+      <div>
+        <label class="field">
+          <span class="field-label">แก้ไขได้ที่นี่ — บรรทัดละหนึ่งกลุ่ม รูปแบบ <code>กลุ่ม: สินค้า1, สินค้า2</code></span>
+          <textarea id="taxonomyText" rows="10" spellcheck="false"></textarea>
+        </label>
+        <div class="btn-row">
+          <button class="btn btn-primary" id="taxonomySave">บันทึกหมวดหมู่</button>
+          <button class="btn" id="taxonomyReset">คืนค่าตั้งต้น</button>
+        </div>
+        <div id="taxonomyResult" style="margin-top:10px"></div>
+      </div>
+      <div>
+        <span class="field-label">แคมเปญที่บันทึกไว้</span>
+        <div class="table-wrap" style="max-height:340px;overflow:auto">
+          <table class="data" id="campaignTable">
+            <thead><tr><th>แคมเปญ</th><th>สินค้า</th><th>ช่องทาง</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <p class="card-note" style="margin-top:8px">แก้สินค้า/ช่องทางของแคมเปญได้ตรงนี้ — บันทึกเก่าที่ผูกกับแคมเปญนั้นจะอัปเดตตามให้เอง</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>นำเข้าข้อมูลเก่า</h2></div>
+    <p class="card-note">อัปโหลดไฟล์ CSV เดิม หรือคัดลอกทั้งตารางจาก Google Sheets / Excel มาวางในช่องด้านล่าง แล้วกดวิเคราะห์ ระบบจะแสดงตัวอย่างให้ตรวจก่อนบันทึกจริง</p>
+    <div class="btn-row" style="margin-top:10px">
+      <input type="file" id="importFile" accept=".csv,.tsv,.txt" style="display:none">
+      <button class="btn" id="importFileBtn">📁 เลือกไฟล์ CSV</button>
+      <span class="card-note" id="importFileName"></span>
+    </div>
+    <label class="field" style="margin-top:12px">
+      <span class="field-label">หรือวางข้อมูลที่นี่</span>
+      <textarea id="importText" rows="7" placeholder="วางข้อมูลจาก Sheets/Excel (คั่นด้วย Tab) หรือ CSV"></textarea>
+    </label>
+    <div class="btn-row">
+      <button class="btn" id="importParse">วิเคราะห์ข้อมูล</button>
+      <button class="btn btn-primary" id="importCommit" disabled>นำเข้าทั้งหมด</button>
+    </div>
+    <div id="importResult" style="margin-top:12px"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>สำรอง / กู้คืน</h2></div>
+    <div class="btn-row" style="margin-top:0">
+      <button class="btn" id="exportJson">⬇ ดาวน์โหลด JSON</button>
+      <button class="btn" id="exportCsv">⬇ ดาวน์โหลด CSV</button>
+      <input type="file" id="restoreFile" accept=".json" style="display:none">
+      <button class="btn" id="restoreBtn">⬆ กู้คืนจาก JSON</button>
+      <span class="spacer"></span>
+      <button class="btn btn-danger" id="wipeLocal">ล้างข้อมูลในเครื่อง</button>
+    </div>
+    <p class="card-note" style="margin-top:10px" id="storageInfo"></p>
+  </div>
+</section>
+
+</main>
+
+<div class="toast" id="toast"></div>
+
+<dialog class="modal" id="afterModal">
+  <form method="dialog" class="modal-body">
+    <h2 id="afterModalTitle">กรอกผลหลังปรับ</h2>
+    <p class="card-note" id="afterModalSub"></p>
+    <div class="grid grid-4" id="afterModalFields" style="margin-top:14px"></div>
+    <div class="card-note" style="margin-top:10px" id="afterModalDerived"></div>
+    <label class="field" style="margin-top:12px">
+      <span class="field-label">สรุปผลที่เกิดขึ้นจริง</span>
+      <textarea id="afterModalNote" rows="2"></textarea>
+    </label>
+    <div class="btn-row">
+      <button class="btn btn-primary" id="afterModalSave" value="save">บันทึกผลหลังปรับ</button>
+      <button class="btn" value="cancel">ยกเลิก</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="assets/app.js"></script>
+</body>
+</html>
