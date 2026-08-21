@@ -376,6 +376,48 @@ details.more > .more-body { margin-top: 14px; }
 }
 .calc-note b { color: var(--text-secondary); font-weight: 500; }
 
+/* แถบอ้างอิงตัวเลขครั้งก่อน */
+.baseline-strip {
+  display: flex; flex-wrap: wrap; gap: 8px 22px; align-items: center;
+  padding: 12px 15px; margin-bottom: 16px;
+  border-radius: var(--r-md);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-ring);
+  font-size: 0.82rem;
+}
+.baseline-strip .bl-head { color: var(--text-primary); }
+.baseline-strip .bl-head b { font-weight: 500; }
+.baseline-strip .calc-item { display: inline-flex; align-items: baseline; gap: 7px; }
+.baseline-strip .calc-item .k { color: var(--text-secondary); font-weight: 300; font-size: 0.94em; }
+.baseline-strip .calc-item .v { font-variant-numeric: tabular-nums; font-weight: 500; }
+.baseline-strip .bl-detail {
+  flex-basis: 100%; font-size: 0.78rem; color: var(--text-secondary);
+  font-weight: 300; padding-top: 2px;
+}
+.baseline-strip.is-empty {
+  background: var(--surface-2); border-color: var(--border);
+  color: var(--text-secondary); font-weight: 300;
+}
+.baseline-strip .icon { font-size: 0.95rem; }
+
+/* % ที่โผล่ข้างชื่อช่องตอนพิมพ์ */
+.delta-inline {
+  font-size: 0.72rem; font-weight: 500;
+  font-variant-numeric: tabular-nums; letter-spacing: -0.01em;
+  margin-left: auto; white-space: nowrap;
+}
+.delta-inline:empty { display: none; }
+
+/* กล่องสรุปผลใต้ช่องตัวเลข */
+.verdict-panel {
+  margin-top: 18px; padding: 16px 18px;
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+.verdict-panel h3 { font-size: 0.9rem; margin-right: auto; }
+.verdict-panel .tile { background: var(--surface-1); }
+
 /* ── Buttons ────────────────────────────────────────────── */
 
 .btn {

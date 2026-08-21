@@ -752,6 +752,7 @@ const Form = {
   editingId: null,
   productTouched: false,
   lastCampaign: '',
+  baseline: null,
 
   init() {
     // แท็ก
@@ -775,15 +776,19 @@ const Form = {
 
     $('#f_date').value = todayISO();
     $('#f_campaign').addEventListener('input', () => this.onCampaignInput());
-    $('#f_campaign').addEventListener('change', () => { this.onCampaignInput(); this.autofillBefore(); });
+    $('#f_campaign').addEventListener('change', () => { this.onCampaignInput(); this.refreshBaseline(); });
     $('#f_product').addEventListener('change', () => {
       this.productTouched = true;              // ผู้ใช้เลือกเอง — ห้ามระบบทับ
       $('#badge_product_auto').hidden = true;
       this.syncGroupView();
       this.refreshCampaignList();
     });
-    $('#f_date').addEventListener('change', () => this.autofillBefore());
-    $('#pullPrevBtn').addEventListener('click', () => this.autofillBefore(true));
+    $('#f_date').addEventListener('change', () => {
+      // วันสิ้นสุดที่ระบบเติมให้ ต้องขยับตามวันที่ปรับ
+      const end = $('#before_end');
+      if (end && end.dataset.autoDate === '1') end.value = $('#f_date').value;
+      this.refreshBaseline();
+    });
     $('#resetBtn').addEventListener('click', () => this.reset());
     $('#deleteBtn').addEventListener('click', () => this.remove());
     $('#saveAddBtn').addEventListener('click', () => this.save(true));
@@ -794,7 +799,7 @@ const Form = {
   onMetricInput(side) {
     applyDerived(side === 'before' ? $('#beforeFields') : $('#afterFields'), side,
       side === 'before' ? $('#beforeDerived') : $('#afterDerived'));
-    this.renderPreview();
+    if (side === 'before') this.updateComparison();
   },
 
   /** สร้าง dropdown สินค้า (จัดกลุ่มด้วย optgroup) และช่องทาง */
@@ -865,44 +870,145 @@ const Form = {
     if (!field.value) {
       const last = Store.sorted()[0];
       field.value = last?.campaign || Store.campaigns[0]?.name || '';
-      if (field.value) { this.onCampaignInput(); this.autofillBefore(); }
+      if (field.value) { this.onCampaignInput(); this.refreshBaseline(); }
     }
   },
 
-  /** เติม "ผลก่อนปรับ" จาก "ผลหลังปรับ" ของบันทึกล่าสุดในแคมเปญเดียวกัน */
-  autofillBefore(force = false) {
+  /** หาบันทึกก่อนหน้าของแคมเปญเดียวกัน แล้วใช้ตัวเลขของมันเป็นฐานเปรียบเทียบ
+   *  ไม่ก๊อปตัวเลขลงช่อง — แค่เอามาโชว์และคำนวณ % ให้ตอนพิมพ์ */
+  refreshBaseline() {
     const campaign = $('#f_campaign').value.trim();
-    const note = $('#beforeAutoNote');
-    if (!campaign) { note.textContent = ''; return; }
+    this.baseline = null;
 
-    const prev = Store.latestFor(campaign, $('#f_date').value, this.editingId);
-    if (!prev) {
-      note.textContent = 'ยังไม่มีบันทึกก่อนหน้าของแคมเปญนี้ — กรอกเองครั้งแรก';
+    if (campaign) {
+      const prev = Store.latestFor(campaign, $('#f_date').value, this.editingId);
+      if (prev) {
+        const prevAfter = block(prev, 'after');
+        const prevBefore = block(prev, 'before');
+        // ถ้าบันทึกก่อนหน้ายังไม่มี "ผลหลังปรับ" แปลว่าตัวเลขที่เรากำลังกรอกคือผลของการปรับครั้งนั้น
+        const usingBefore = !hasNumbers(prevAfter);
+        const src = usingBefore ? prevBefore : prevAfter;
+        if (hasNumbers(src)) {
+          this.baseline = {
+            record: prev,
+            block: src,
+            judgesPrevAdjustment: usingBefore,
+            label: usingBefore
+              ? `ผลของการปรับเมื่อ ${thaiDate(prev.date)}`
+              : `เทียบกับตัวเลขล่าสุด (${thaiDate(prev.date)})`
+          };
+        }
+      }
+    }
+
+    this.fillDefaultDates();
+    this.renderBaselineStrip();
+    this.updateComparison();
+  },
+
+  /** ช่วงวันที่: เริ่ม = วันที่บันทึกครั้งก่อน · สิ้นสุด = วันที่ปรับครั้งนี้ */
+  fillDefaultDates() {
+    const start = $('#before_start'), end = $('#before_end');
+    if (!start || !end) return;
+    if (!start.value && this.baseline) {
+      const prev = this.baseline.record;
+      start.value = prev.after_end || prev.before_end || prev.date || '';
+      if (start.value) start.dataset.autoDate = '1';
+    }
+    if (!end.value) {
+      end.value = $('#f_date').value || todayISO();
+      end.dataset.autoDate = '1';
+    }
+  },
+
+  /** แถบอ้างอิงตัวเลขครั้งก่อน */
+  renderBaselineStrip() {
+    const host = $('#baselineStrip');
+    if (!host) return;
+    host.innerHTML = '';
+    const campaign = $('#f_campaign').value.trim();
+    if (!campaign) return;
+
+    if (!this.baseline) {
+      host.append(el('div', { class: 'baseline-strip is-empty' },
+        el('span', { class: 'icon' }, '🌱'),
+        el('span', {}, 'บันทึกแรกของแคมเปญนี้ — กรอกตัวเลขไว้เป็นฐาน ครั้งหน้าระบบจะเทียบให้อัตโนมัติ')));
       return;
     }
-    const prevAfter = block(prev, 'after');
-    const source = hasNumbers(prevAfter) ? { data: prevAfter, from: 'ผลหลังปรับ' }
-      : { data: block(prev, 'before'), from: 'ผลก่อนปรับ' };
-    if (!hasNumbers(source.data)) {
-      note.textContent = 'บันทึกก่อนหน้ายังไม่มีตัวเลข';
-      return;
+
+    const b = solveBlock(this.baseline.block).values;
+    const prev = this.baseline.record;
+    const strip = el('div', { class: 'baseline-strip' },
+      el('span', { class: 'bl-head' },
+        el('b', {}, 'ครั้งก่อน'), ' ', thaiDate(prev.date)));
+
+    for (const key of ['impressions', 'ctr', 'cpc', 'conversions', 'cpa']) {
+      if (b[key] === null) continue;
+      strip.append(el('span', { class: 'calc-item' },
+        el('span', { class: 'k' }, METRIC_BY_KEY[key].short),
+        el('span', { class: 'v' }, fmtMetric(key, b[key]))));
     }
 
-    const already = hasNumbers(readBlock('before'));
-    if (already && !force) {
-      note.textContent = 'มีตัวเลขอยู่แล้ว — กด "ดึงจากบันทึกล่าสุด" เพื่อทับ';
-      return;
-    }
+    strip.append(el('button', {
+      type: 'button', class: 'link', style: 'margin-left:auto',
+      title: 'ใส่ตัวเลขชุดเดิมลงช่อง เผื่ออยากแก้ทีละตัว',
+      onclick: () => this.copyBaselineIntoFields()
+    }, 'คัดลอกมาแก้'));
 
+    if ((prev.change_detail || '').trim()) {
+      strip.append(el('div', { class: 'bl-detail' },
+        'ครั้งนั้นปรับ: ' + String(prev.change_detail).replace(/\s+/g, ' ').slice(0, 120)));
+    }
+    host.append(strip);
+  },
+
+  copyBaselineIntoFields() {
+    if (!this.baseline) return;
+    const b = solveBlock(this.baseline.block).values;
     clearAutoFlags('before');
     for (const m of METRICS) {
-      const v = num(source.data[m.key]);
-      $(`#before_${m.key}`).value = v === null ? '' : round(v, m.dec);
+      $(`#before_${m.key}`).value = b[m.key] === null ? '' : round(b[m.key], m.dec);
     }
-    $('#before_start').value = source.data._start || '';
-    $('#before_end').value = source.data._end || '';
-    note.textContent = `ดึงจาก ${source.from} ของบันทึกวันที่ ${thaiDate(prev.date)} แล้ว`;
     this.onMetricInput('before');
+    toast('คัดลอกตัวเลขครั้งก่อนมาแล้ว — แก้ทับได้เลย');
+  },
+
+  /** คำนวณ % เทียบกับ baseline แล้วเติมข้าง ๆ ทุกช่อง + สรุปรวมท้ายกล่อง */
+  updateComparison() {
+    const clear = () => {
+      for (const m of METRICS) {
+        const span = $(`#d_before_${m.key}`);
+        if (span) { span.textContent = ''; span.className = 'delta-inline'; }
+      }
+      $('#livePreview').innerHTML = '';
+    };
+
+    const cur = readBlock('before');
+    if (!this.baseline || !hasNumbers(cur)) { clear(); return; }
+
+    const cmp = compareBlocks(this.baseline.block, cur, 'auto');
+
+    for (const m of METRICS) {
+      const span = $(`#d_before_${m.key}`);
+      if (!span) continue;
+      const row = cmp.rows.find(r => r.key === m.key);
+      if (!row || row.deltaPct === null) { span.textContent = ''; span.className = 'delta-inline'; continue; }
+      const cls = row.good === null ? 'delta-flat' : row.good ? 'delta-up' : 'delta-down';
+      const arrow = row.dir === 'up' ? '▲' : row.dir === 'down' ? '▼' : '＝';
+      span.className = `delta-inline ${cls}`;
+      span.textContent = `${arrow}${fmt(Math.abs(row.deltaPct), 1)}%`;
+      span.title = `ครั้งก่อน ${fmtMetric(m.key, row.before)}` + (row.perDay ? ' (ต่อวัน)' : '');
+    }
+
+    const host = $('#livePreview');
+    host.innerHTML = '';
+    host.append(el('div', { class: 'verdict-panel' },
+      el('div', { class: 'card-head', style: 'margin-bottom:12px' },
+        el('h3', {}, this.baseline.label),
+        verdictBadge(cmp.verdict)),
+      cmp.perDay ? el('p', { class: 'card-note', style: 'margin-bottom:12px' },
+        `ช่วงก่อน ${cmp.bDays} วัน · ช่วงนี้ ${cmp.aDays} วัน — ตัวเลขสะสมถูกแปลงเป็นค่าเฉลี่ยต่อวันก่อนเทียบ`) : null,
+      deltaTiles(cmp)));
   },
 
   load(rec) {
@@ -941,8 +1047,14 @@ const Form = {
       }
       this.onMetricInput(side);
     }
-    $('#beforeAutoNote').textContent = '';
-    if (!rec) this.autofillBefore();
+    // กล่อง "ตัวเลขหลังปรับ" โผล่เฉพาะบันทึกที่มีตัวเลขชุดนั้นอยู่แล้ว
+    const afterCard = $('#afterCard');
+    if (afterCard) {
+      const has = !!(rec && hasNumbers(block(rec, 'after')));
+      afterCard.hidden = !has;
+      afterCard.open = false;
+    }
+    this.refreshBaseline();
     window.scrollTo({ top: 0, behavior: 'smooth' });
   },
 
@@ -952,9 +1064,12 @@ const Form = {
       clearAutoFlags(side);
       $(`#${side}_start`).value = '';
       $(`#${side}_end`).value = '';
+      delete $(`#${side}_start`).dataset.autoDate;
+      delete $(`#${side}_end`).dataset.autoDate;
       for (const m of METRICS) $(`#${side}_${m.key}`).value = '';
       this.onMetricInput(side);
     }
+    if ($('#afterCard')) $('#afterCard').hidden = true;
     $('#f_product').value = '';
     $('#f_campaign').value = '';
     this.productTouched = false;
@@ -987,19 +1102,6 @@ const Form = {
       }
     }
     return rec;
-  },
-
-  renderPreview() {
-    const host = $('#livePreview');
-    const b = readBlock('before'), a = readBlock('after');
-    if (!hasNumbers(b) || !hasNumbers(a)) { host.innerHTML = ''; return; }
-    const cmp = compareBlocks(b, a, 'auto');
-    host.innerHTML = '';
-    host.append(el('div', { class: 'card' },
-      el('div', { class: 'card-head' },
-        el('h2', { text: 'ผลเบื้องต้นของการปรับครั้งนี้' }),
-        verdictBadge(cmp.verdict)),
-      deltaTiles(cmp)));
   },
 
   /** ข้อความ "สิ่งที่ปรับ" ที่เคยพิมพ์ — ใช้เติมอัตโนมัติ */
@@ -1115,29 +1217,23 @@ const Form = {
     $('#formTitle').textContent = 'บันทึกการปรับใหม่';
     $('#formHint').textContent = `จดต่อในแคมเปญ ${prev.campaign}`;
     $('#deleteBtn').hidden = true;
+    if ($('#afterCard')) $('#afterCard').hidden = true;
 
     for (const key of ['#f_change_detail', '#f_reason', '#f_expected', '#f_result_note']) $(key).value = '';
     this.selectedTags.clear();
     $$('#tagChips .chip').forEach(c => c.setAttribute('aria-pressed', 'false'));
 
-    // ตัวเลขหลังปรับของอันที่เพิ่งบันทึก = ตัวเลขก่อนปรับของอันถัดไป
-    const after = block(prev, 'after');
-    clearAutoFlags('before');
-    clearAutoFlags('after');
-    if (hasNumbers(after)) {
-      for (const m of METRICS) {
-        const v = num(after[m.key]);
-        $(`#before_${m.key}`).value = v === null ? '' : round(v, m.dec);
-      }
-      $('#before_start').value = after._start || '';
-      $('#before_end').value = after._end || '';
-      $('#beforeAutoNote').textContent = 'ยกตัวเลขหลังปรับของบันทึกก่อนหน้ามาให้แล้ว';
+    // ล้างตัวเลขให้หมด แล้วให้บันทึกที่เพิ่งเซฟกลายเป็นฐานเปรียบเทียบอันใหม่
+    for (const side of ['before', 'after']) {
+      clearAutoFlags(side);
+      for (const m of METRICS) $(`#${side}_${m.key}`).value = '';
+      $(`#${side}_start`).value = '';
+      $(`#${side}_end`).value = '';
+      delete $(`#${side}_start`).dataset.autoDate;
+      delete $(`#${side}_end`).dataset.autoDate;
+      this.onMetricInput(side);
     }
-    for (const m of METRICS) $(`#after_${m.key}`).value = '';
-    $('#after_start').value = '';
-    $('#after_end').value = '';
-    this.onMetricInput('before');
-    this.onMetricInput('after');
+    this.refreshBaseline();
 
     const detail = $('#f_change_detail');
     detail.scrollIntoView({ block: 'center', behavior: 'smooth' });
@@ -1169,7 +1265,8 @@ function metricInput(side, m, onInput) {
     el('span', { class: 'field-label' },
       m.label,
       m.unit ? el('span', { class: 'field-unit', text: m.unit }) : null,
-      el('span', { class: 'auto-badge', id: `badge_${side}_${m.key}`, hidden: true, text: 'คำนวณให้' })),
+      el('span', { class: 'auto-badge', id: `badge_${side}_${m.key}`, hidden: true, text: 'คำนวณให้' }),
+      el('span', { class: 'delta-inline', id: `d_${side}_${m.key}` })),
     el('input', {
       type: 'number', step: 'any', min: '0', id: `${side}_${m.key}`,
       placeholder: '—', inputmode: 'decimal',
