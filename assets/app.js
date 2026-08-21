@@ -8,7 +8,7 @@
    1. ค่าคงที่
    ───────────────────────────────────────────────────────────── */
 
-const APP_VERSION = '1.9.0';
+const APP_VERSION = '1.10.0';
 const LS_CONFIG = 'aar.config.v1';
 
 /* ═══════════════════════════════════════════════════════════════
@@ -96,6 +96,95 @@ const TAGS = [
   'เปลี่ยน Bid Strategy', 'เปิด/ปิดแคมเปญ', 'อื่น ๆ'
 ];
 
+/**
+ * ช่องกรอกที่โผล่ขึ้นมาเมื่อกดชิปแต่ละประเภท
+ * fields: ช่องที่ต้องกรอก · text(v): ประกอบเป็นข้อความ "สิ่งที่ปรับ" ให้อัตโนมัติ
+ * ประเภทที่ไม่มีในนี้ = ใช้ช่องรายละเอียดอิสระอย่างเดียวเหมือนเดิม
+ */
+const MATCH_TYPES = ['Broad', 'Phrase', 'Exact'];
+const BID_STRATEGIES = ['Maximize conversions', 'Maximize conversion value', 'Target CPA',
+  'Target ROAS', 'Maximize clicks', 'Manual CPC', 'Enhanced CPC', 'Target impression share'];
+
+const TAG_FORMS = {
+  'ปรับงบประมาณ': {
+    setting: 'budget',                       // ซิงก์กับหน้า "งบ & Bid" ให้ด้วย
+    fields: [
+      { key: 'from', label: 'งบเดิม', unit: 'บาท/วัน', type: 'number', step: '1', fillFrom: 'budget' },
+      { key: 'to', label: 'งบใหม่', unit: 'บาท/วัน', type: 'number', step: '1', required: true }
+    ],
+    text: v => v.to ? `ปรับงบ ${v.from ? v.from + ' → ' : '→ '}${v.to} บาท/วัน` : ''
+  },
+  'ปรับ Bid / Max CPC': {
+    setting: 'bid',
+    fields: [
+      { key: 'from', label: 'Bid เดิม', unit: 'บาท', type: 'number', step: '0.01', fillFrom: 'bid' },
+      { key: 'to', label: 'Bid ใหม่', unit: 'บาท', type: 'number', step: '0.01', required: true }
+    ],
+    text: v => v.to ? `ปรับ Max CPC ${v.from ? v.from + ' → ' : '→ '}${v.to} บาท` : ''
+  },
+  'เพิ่ม Keywords': {
+    fields: [{ key: 'list', label: 'คำที่เพิ่ม', unit: 'บรรทัดละคำ', type: 'lines',
+               placeholder: 'ซื้อ ลำโพง bose\nลำโพง bose ราคา' }],
+    text: v => lineList(v.list, 'เพิ่ม Keywords')
+  },
+  'ลบ Keywords': {
+    fields: [{ key: 'list', label: 'คำที่ลบ', unit: 'บรรทัดละคำ', type: 'lines' }],
+    text: v => lineList(v.list, 'ลบ Keywords')
+  },
+  'เพิ่ม Negative Keywords': {
+    fields: [{ key: 'list', label: 'คำที่กัน', unit: 'บรรทัดละคำ', type: 'lines',
+               placeholder: 'ซ่อม\nมือสอง\nราคาถูก' }],
+    text: v => lineList(v.list, 'เพิ่ม Negative')
+  },
+  'ปรับ Match Type': {
+    fields: [
+      { key: 'kw', label: 'คำที่ปรับ', type: 'text', placeholder: 'เช่น ลำโพง bose' },
+      { key: 'from', label: 'จาก', type: 'select', options: MATCH_TYPES },
+      { key: 'to', label: 'เป็น', type: 'select', options: MATCH_TYPES, required: true }
+    ],
+    text: v => v.to ? `ปรับ Match Type${v.kw ? ` "${v.kw}"` : ''} ${v.from ? v.from + ' → ' : '→ '}${v.to}` : ''
+  },
+  'เปลี่ยน Bid Strategy': {
+    fields: [
+      { key: 'from', label: 'จาก', type: 'select', options: BID_STRATEGIES },
+      { key: 'to', label: 'เป็น', type: 'select', options: BID_STRATEGIES, required: true },
+      { key: 'target', label: 'ค่าเป้าหมาย', unit: 'ไม่บังคับ', type: 'text', placeholder: 'เช่น tCPA 120 บาท' }
+    ],
+    text: v => v.to
+      ? `เปลี่ยน Bid Strategy ${v.from ? v.from + ' → ' : '→ '}${v.to}${v.target ? ` (${v.target})` : ''}` : ''
+  },
+  'เปิด/ปิดแคมเปญ': {
+    fields: [{ key: 'state', label: 'สถานะใหม่', type: 'select', options: ['เปิด', 'ปิด'], required: true }],
+    text: v => v.state ? `${v.state}แคมเปญ` : ''
+  },
+  'แก้ Headline / Description': {
+    fields: [
+      { key: 'part', label: 'แก้ส่วนไหน', type: 'select', options: ['Headline', 'Description', 'ทั้งสองอย่าง'] },
+      { key: 'from', label: 'ข้อความเดิม', type: 'text' },
+      { key: 'to', label: 'ข้อความใหม่', type: 'text', required: true }
+    ],
+    text: v => v.to ? `แก้ ${v.part || 'ข้อความโฆษณา'}: ${v.from ? `"${v.from}" → ` : ''}"${v.to}"` : ''
+  },
+  'ปรับ Landing Page': {
+    fields: [{ key: 'url', label: 'URL ใหม่', type: 'text', placeholder: 'https://…', required: true }],
+    text: v => v.url ? `เปลี่ยน Landing Page → ${v.url}` : ''
+  },
+  'ปรับ Location / Schedule': {
+    fields: [{ key: 'detail', label: 'ปรับอะไร', type: 'text',
+               placeholder: 'เช่น เพิ่ม กรุงเทพ +20% / ปิดโฆษณา 00:00-06:00', required: true }],
+    text: v => v.detail ? `ปรับ Location/Schedule: ${v.detail}` : ''
+  }
+};
+
+/** "เพิ่ม Negative 3 คำ: ซ่อม, มือสอง, ราคาถูก" */
+function lineList(raw, verb) {
+  const items = String(raw || '').split(/[\n,]/).map(x => x.trim()).filter(Boolean);
+  if (!items.length) return '';
+  const shown = items.slice(0, 8).map(x => `"${x}"`).join(', ');
+  const more = items.length > 8 ? ` +อีก ${items.length - 8} คำ` : '';
+  return `${verb} ${items.length} คำ: ${shown}${more}`;
+}
+
 const SERIES_VARS = ['--series-1', '--series-2', '--series-3', '--series-4', '--series-5', '--series-6'];
 
 /* ─────────────────────────────────────────────────────────────
@@ -121,6 +210,9 @@ function el(tag, attrs = {}, ...kids) {
   }
   return node;
 }
+
+/** ชื่อประเภท → id ที่ใช้ใน DOM ได้ (ไทย/ช่องว่าง/สแลช ใช้ตรง ๆ ไม่ได้) */
+const slug = s => 'x' + [...String(s)].map(c => c.charCodeAt(0).toString(36)).join('');
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -202,6 +294,20 @@ let toastTimer;
 function toast(msg, ms = 2600) {
   const t = $('#toast');
   t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), ms);
+}
+
+/** toast ที่มีปุ่มให้กด — ใช้กับ "ลบแล้ว · เลิกทำ" */
+function toastAction(msg, label, fn, ms = 7000) {
+  const t = $('#toast');
+  t.textContent = '';
+  t.append(el('span', {}, msg));
+  t.append(el('button', {
+    type: 'button', class: 'toast-btn',
+    onclick: () => { clearTimeout(toastTimer); t.classList.remove('show'); fn(); }
+  }, label));
   t.classList.add('show');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => t.classList.remove('show'), ms);
@@ -814,6 +920,11 @@ const Form = {
           const on = e.currentTarget.getAttribute('aria-pressed') === 'true';
           e.currentTarget.setAttribute('aria-pressed', String(!on));
           if (on) this.selectedTags.delete(t); else this.selectedTags.add(t);
+          this.renderTagForms();
+          if (!on && TAG_FORMS[t]) {
+            setTimeout(() => $(`#tagform-${slug(t)} input, #tagform-${slug(t)} textarea,
+              #tagform-${slug(t)} select`)?.focus(), 60);
+          }
         }
       }));
     }
@@ -822,6 +933,11 @@ const Form = {
     buildMetricFields($('#afterFields'), 'after', () => this.onMetricInput('after'));
 
     this.buildTaxonomySelects();
+
+    $('#f_change_detail').addEventListener('input', e => {
+      // พิมพ์เองเมื่อไหร่ ระบบเลิกเขียนทับทันที
+      if (e.isTrusted) { delete e.target.dataset.auto; e.target.classList.remove('is-auto'); }
+    });
 
     $('#f_date').value = todayISO();
     $('#f_campaign').addEventListener('input', () => this.onCampaignInput());
@@ -947,6 +1063,115 @@ const Form = {
     }
   },
 
+  /** วาด/ลบกล่องช่องกรอกของแต่ละประเภทที่เลือกไว้ โดยไม่ล้างค่าที่พิมพ์ไปแล้ว */
+  renderTagForms() {
+    const host = $('#tagForms');
+    if (!host) return;
+    const want = TAGS.filter(t => this.selectedTags.has(t) && TAG_FORMS[t]);
+
+    // ลบกล่องของประเภทที่ยกเลิกไป
+    for (const box of $$('#tagForms .tagform')) {
+      if (!want.includes(box.dataset.tag)) box.remove();
+    }
+    // เพิ่มกล่องใหม่ เรียงตามลำดับชิป
+    for (const t of want) {
+      if ($(`#tagform-${slug(t)}`)) continue;
+      host.append(this.buildTagForm(t));
+    }
+    host.hidden = want.length === 0;
+    this.composeDetail();
+  },
+
+  buildTagForm(tag) {
+    const spec = TAG_FORMS[tag];
+    const box = el('div', { class: 'tagform', id: `tagform-${slug(tag)}`, 'data-tag': tag });
+    box.append(el('div', { class: 'tagform-head' },
+      el('b', {}, tag),
+      el('button', {
+        type: 'button', class: 'tf-close', 'aria-label': `เอา ${tag} ออก`,
+        onclick: () => {
+          this.selectedTags.delete(tag);
+          const chip = $$('#tagChips .chip').find(c => c.dataset.tag === tag);
+          chip?.setAttribute('aria-pressed', 'false');
+          this.renderTagForms();
+        }
+      }, '✕')));
+
+    const row = el('div', { class: 'tagform-row' });
+    for (const f of spec.fields) {
+      const id = `tf_${slug(tag)}_${f.key}`;
+      let input;
+      if (f.type === 'select') {
+        input = el('select', { id, onchange: () => this.composeDetail() },
+          el('option', { value: '' }, '— เลือก —'),
+          f.options.map(o => el('option', { value: o }, o)));
+      } else if (f.type === 'lines') {
+        input = el('textarea', { id, rows: 3, placeholder: f.placeholder || '',
+          oninput: () => this.composeDetail() });
+      } else {
+        input = el('input', { type: f.type === 'number' ? 'number' : 'text', id,
+          step: f.step || null, inputmode: f.type === 'number' ? 'decimal' : null,
+          placeholder: f.placeholder || '', oninput: () => this.composeDetail() });
+      }
+      // เติมค่าเดิมจากที่ตั้งไว้ในแคมเปญ (งบ/bid) ให้อัตโนมัติ
+      if (f.fillFrom) {
+        const prev = latestSetting($('#f_campaign').value.trim(), f.fillFrom);
+        if (prev) { input.value = prev.value; input.dataset.auto = '1'; }
+      }
+      row.append(el('label', { class: `field${f.type === 'lines' ? ' grow-all' : ''}` },
+        el('span', { class: 'field-label' }, f.label,
+          f.unit ? el('span', { class: 'field-unit' }, f.unit) : null),
+        input));
+    }
+    box.append(row);
+    return box;
+  },
+
+  /** อ่านค่าที่กรอกในกล่องประเภทหนึ่ง */
+  readTagForm(tag) {
+    const out = {};
+    for (const f of (TAG_FORMS[tag]?.fields || [])) {
+      out[f.key] = ($(`#tf_${slug(tag)}_${f.key}`)?.value || '').trim();
+    }
+    return out;
+  },
+
+  /**
+   * ประกอบข้อความ "รายละเอียดสิ่งที่ปรับ" จากกล่องต่าง ๆ ให้อัตโนมัติ
+   * ถ้าผู้ใช้พิมพ์เองไปแล้ว จะไม่ทับให้ (ดูที่ dataset.auto)
+   */
+  composeDetail() {
+    const box = $('#f_change_detail');
+    if (!box) return;
+    if (box.value.trim() && box.dataset.auto !== '1') return;   // ข้อความที่พิมพ์เอง ห้ามแตะ
+
+    // เรียงตามลำดับกล่องบนหน้าจอ ประโยคจะได้ตรงกับที่เห็น
+    const parts = $$('#tagForms .tagform')
+      .map(b => b.dataset.tag)
+      .filter(t => TAG_FORMS[t])
+      .map(t => TAG_FORMS[t].text(this.readTagForm(t)))
+      .filter(Boolean);
+
+    if (!parts.length) {
+      if (box.dataset.auto === '1') { box.value = ''; delete box.dataset.auto; box.classList.remove('is-auto'); }
+      return;
+    }
+    box.value = parts.join(' · ');
+    box.dataset.auto = '1';
+    box.classList.add('is-auto');
+  },
+
+  /** งบ/bid ที่กรอกในกล่องประเภท — เอาไปอัปเดตค่าปัจจุบันของแคมเปญด้วย */
+  tagFormSettings() {
+    const out = {};
+    for (const [tag, spec] of Object.entries(TAG_FORMS)) {
+      if (!spec.setting || !this.selectedTags.has(tag)) continue;
+      const v = this.readTagForm(tag).to;
+      if (v !== '' && num(v) !== null) out[spec.setting] = v;
+    }
+    return out;
+  },
+
   refreshCampaignList() {
     const dl = $('#campaignList');
     dl.innerHTML = '';
@@ -987,6 +1212,16 @@ const Form = {
             : 'ผลของการปรับในรอบนี้'
         };
       }
+    }
+
+    // ค่า "เดิม" ในกล่องงบ/bid ผูกกับแคมเปญ เปลี่ยนแคมเปญต้องเติมใหม่
+    for (const [tag, spec] of Object.entries(TAG_FORMS)) {
+      if (!spec.setting || !this.selectedTags.has(tag)) continue;
+      const input = $(`#tf_${slug(tag)}_from`);
+      if (!input || (input.value && input.dataset.auto !== '1')) continue;
+      const prev = latestSetting(campaign, spec.setting);
+      input.value = prev ? prev.value : '';
+      if (prev) input.dataset.auto = '1'; else delete input.dataset.auto;
     }
 
     this.fillDefaultDates();
@@ -1141,6 +1376,11 @@ const Form = {
     this.selectedTags = new Set(String(rec?.tags || '').split('|').map(s => s.trim()).filter(Boolean));
     $$('#tagChips .chip').forEach(c =>
       c.setAttribute('aria-pressed', String(this.selectedTags.has(c.dataset.tag))));
+    // บันทึกเก่ามีข้อความอยู่แล้ว ถือว่าเป็นของผู้ใช้ ห้ามเขียนทับ
+    delete $('#f_change_detail').dataset.auto;
+    $('#f_change_detail').classList.remove('is-auto');
+    $$('#tagForms .tagform').forEach(b => b.remove());
+    this.renderTagForms();
 
     for (const side of ['before', 'after']) {
       clearAutoFlags(side);
@@ -1277,6 +1517,16 @@ const Form = {
       if (isEdit) await Store.update(rec);
       else await Store.create(rec);
 
+      // งบ/bid ที่กรอกในกล่อง "ปรับงบประมาณ"/"ปรับ Bid" = ค่าใหม่ของแคมเปญ
+      const settings = this.tagFormSettings();
+      if (Object.keys(settings).length) {
+        const cur = Store.campaign(rec.campaign) || {};
+        await Store.saveCampaignSettings(rec.campaign, {
+          budget: settings.budget ?? (cur.budget ?? ''),
+          bid: settings.bid ?? (cur.bid ?? '')
+        });
+      }
+
       // จำสินค้าไว้ที่แคมเปญ ครั้งหน้าจะได้ไม่ต้องเลือกอีก
       const meta = Store.campaign(rec.campaign);
       if (rec.product && (!meta || !meta.product)) {
@@ -1329,6 +1579,10 @@ const Form = {
     for (const key of ['#f_change_detail', '#f_reason', '#f_expected', '#f_result_note']) $(key).value = '';
     this.selectedTags.clear();
     $$('#tagChips .chip').forEach(c => c.setAttribute('aria-pressed', 'false'));
+    $$('#tagForms .tagform').forEach(b => b.remove());
+    this.renderTagForms();
+    delete $('#f_change_detail').dataset.auto;
+    $('#f_change_detail').classList.remove('is-auto');
 
     // ล้างตัวเลขให้หมด แล้วให้บันทึกที่เพิ่งเซฟกลายเป็นฐานเปรียบเทียบอันใหม่
     for (const side of ['before', 'after']) {
@@ -1802,6 +2056,11 @@ function renderTimeline() {
         onclick: () => Measure.open(rec.campaign)
       }));
     }
+    actions.append(el('button', {
+      class: 'btn btn-sm btn-danger', text: '🗑 ลบ',
+      title: 'ลบบันทึกนี้ — กด "เลิกทำ" ในแถบด้านล่างเพื่อเอากลับได้',
+      onclick: () => deleteRecord(rec)
+    }));
     actions.append(el('button', { class: 'btn btn-sm', text: '⧉ ทำซ้ำ', onclick: () => {
       const copy = { ...rec, id: '', date: todayISO(), result_note: '' };
       for (const m of METRICS) { copy[`after_${m.key}`] = ''; }
@@ -1813,6 +2072,30 @@ function renderTimeline() {
     } }));
     card.append(actions);
     host.append(card);
+  }
+}
+
+/**
+ * ลบบันทึก แล้วเปิดทางให้กด "เลิกทำ" ได้ 8 วินาที
+ * เอากลับด้วย id เดิม ทุกอย่างที่อ้างถึงบันทึกนี้จึงกลับมาเหมือนเดิม
+ */
+async function deleteRecord(rec) {
+  const backup = { ...rec };
+  try {
+    await Store.remove(rec.id);
+    refreshAll();
+    const what = String(rec.change_detail || '').trim().slice(0, 40) || 'บันทึกที่ไม่มีข้อความ';
+    toastAction(`ลบ "${what}" แล้ว`, 'เลิกทำ', async () => {
+      try {
+        await Store.create(backup);
+        refreshAll();
+        toast('เอากลับมาแล้ว');
+      } catch (err) {
+        toast('เอากลับไม่สำเร็จ: ' + (err.message || err), 5000);
+      }
+    }, 8000);
+  } catch (err) {
+    toast('ลบไม่สำเร็จ: ' + (err.message || err), 5000);
   }
 }
 

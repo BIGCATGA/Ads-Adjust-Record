@@ -1098,6 +1098,55 @@ tr.row-warn td { background: var(--warning-wash); }
   padding: 0 2px; text-decoration: underline; text-underline-offset: 2px;
 }
 
+/* ── กล่องกรอกประจำประเภทการปรับ ─────────────────────────── */
+
+#tagForms { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+
+.tagform {
+  border: 1px solid var(--accent-ring);
+  background: var(--accent-soft);
+  border-radius: var(--r-md);
+  padding: 13px 15px;
+  animation: tf-in 0.18s var(--ease);
+}
+@keyframes tf-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+
+.tagform-head {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
+}
+.tagform-head b { font-size: 0.8rem; font-weight: 500; color: var(--accent); }
+.tf-close {
+  appearance: none; border: 0; background: none; font: inherit; cursor: pointer;
+  margin-left: auto; color: var(--text-muted); font-size: 0.85rem;
+  line-height: 1; padding: 4px 6px; border-radius: var(--r-sm);
+}
+.tf-close:hover { background: var(--surface-3); color: var(--text-primary); }
+
+.tagform-row {
+  display: grid; gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+}
+.tagform-row .field.grow-all { grid-column: 1 / -1; }
+.tagform input, .tagform select, .tagform textarea { background: var(--surface-1); }
+.tagform textarea { min-height: 72px; }
+
+/* ข้อความที่ระบบเขียนให้ — บอกให้รู้ว่าแก้ทับได้ */
+#f_change_detail.is-auto {
+  background: var(--accent-soft);
+  border-color: var(--accent-ring);
+}
+
+/* ปุ่มในแถบ toast (เลิกทำ) */
+.toast-btn {
+  appearance: none; border: 0; background: none; font: inherit; cursor: pointer;
+  pointer-events: auto;
+  margin-left: 14px; padding: 2px 6px; border-radius: var(--r-sm);
+  color: #7fb6ff; font-weight: 500; text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.toast-btn:hover { color: #fff; }
+.toast-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px #7fb6ff; }
+
 /* ── ปุ่มบันทึกตอนกำลังทำงาน ────────────────────────────── */
 
 .btn.is-busy { pointer-events: none; }
