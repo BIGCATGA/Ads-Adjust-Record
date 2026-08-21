@@ -142,17 +142,12 @@
         </div>
       </details>
 
-      <details class="more" id="afterCard" style="margin-top:18px" hidden>
-        <summary>ตัวเลขหลังปรับที่บันทึกไว้แล้ว (ปกติไม่ต้องแตะ)</summary>
-        <div class="more-body">
-          <p class="card-note" style="margin-bottom:12px">
-            ช่องชุดนี้ปกติระบบเติมให้เองจากบันทึกครั้งถัดไปของแคมเปญเดียวกัน
-            จะเห็นก็ต่อเมื่อบันทึกนี้มีตัวเลขอยู่แล้ว
-          </p>
-          <div id="afterFields"></div>
-          <div class="calc-note" id="afterDerived"></div>
-        </div>
-      </details>
+      <!-- ช่อง after_* ระบบเติมเองจากบันทึกครั้งถัดไป ไม่เปิดให้แก้มือ
+           (เก็บไว้ใน DOM เพราะโค้ดคำนวณยังอ้างถึง) -->
+      <div id="afterCard" hidden>
+        <div id="afterFields"></div>
+        <div class="calc-note" id="afterDerived"></div>
+      </div>
 
       <label class="field" style="margin-top:16px">
         <span class="field-label">สรุปผลที่เกิดขึ้นจริง <span class="field-unit">ไม่บังคับ</span></span>
@@ -204,13 +199,8 @@
     <button class="btn btn-sm btn-ghost" id="clearFilters">ล้าง</button>
   </div>
 
-  <div class="card">
-    <div class="card-head">
-      <h2>สรุปช่วงที่เลือก</h2>
-      <span class="card-note" id="timelineCount"></span>
-    </div>
-    <div class="tiles" id="timelineTiles"></div>
-  </div>
+  <div class="summary-bar" id="timelineTiles"></div>
+  <span class="visually-hidden" id="timelineCount"></span>
 
   <div class="timeline" id="timelineList"></div>
 </section>
@@ -250,23 +240,6 @@
       </table>
     </div>
   </div>
-
-  <div class="filterbar">
-    <label class="field grow">
-      <span class="field-label">เลือกบันทึกที่จะดูผลก่อน/หลัง</span>
-      <select id="dashRecord"></select>
-    </label>
-    <label class="field w-md">
-      <span class="field-label">วิธีเทียบ</span>
-      <select id="dashMode">
-        <option value="auto">อัตโนมัติ (ปรับเป็นต่อวันถ้าช่วงไม่เท่ากัน)</option>
-        <option value="raw">ค่าดิบ (ไม่ปรับ)</option>
-        <option value="perday">ต่อวันเสมอ</option>
-      </select>
-    </label>
-  </div>
-
-  <div id="dashContent"></div>
 
   <div class="card">
     <div class="card-head">
@@ -310,31 +283,21 @@
   <div class="card">
     <div class="card-head">
       <h2>รอบวัดผล</h2>
-      <span class="card-note">แต่ละรอบ = ช่วงระหว่างการวัดผลสองครั้ง</span>
+      <span class="card-note">แต่ละรอบ = ช่วงระหว่างการวัดผลสองครั้ง · คลิกเพื่อดูทุกตัวชี้วัด</span>
       <label class="field w-md" style="margin-left:auto">
         <select id="roundCampaign"><option value="">ทุกแคมเปญ</option></select>
+      </label>
+      <label class="field w-md">
+        <select id="dashMode">
+          <option value="auto">เทียบอัตโนมัติ (ต่อวันถ้าช่วงไม่เท่ากัน)</option>
+          <option value="raw">ค่าดิบ (ไม่ปรับ)</option>
+          <option value="perday">ต่อวันเสมอ</option>
+        </select>
       </label>
     </div>
     <div id="roundList"></div>
   </div>
 
-  <div class="card">
-    <div class="card-head">
-      <h2>ภาพรวมทุกการปรับ</h2>
-      <span class="card-note">เรียงจากใหม่ไปเก่า — ดูว่าการปรับครั้งไหนได้ผลจริง</span>
-    </div>
-    <div class="table-wrap">
-      <table class="data" id="allAdjTable">
-        <thead>
-          <tr>
-            <th>วันที่ / แคมเปญ</th><th class="w-wide">สิ่งที่ปรับ</th>
-            <th>CPA</th><th>Conv/วัน</th><th>CVR</th><th>CTR</th><th>IS</th><th>ผลรวม</th>
-          </tr>
-        </thead>
-        <tbody></tbody>
-      </table>
-    </div>
-  </div>
 </section>
 
 <!-- ══════════════ 4. กราฟเทรนด์ ══════════════ -->
@@ -491,22 +454,6 @@
 
 <div class="toast" id="toast"></div>
 
-<dialog class="modal" id="afterModal">
-  <form method="dialog" class="modal-body">
-    <h2 id="afterModalTitle">กรอกผลหลังปรับ</h2>
-    <p class="card-note" id="afterModalSub"></p>
-    <div id="afterModalFields" style="margin-top:16px"></div>
-    <div class="calc-note" id="afterModalDerived"></div>
-    <label class="field" style="margin-top:14px">
-      <span class="field-label">สรุปผลที่เกิดขึ้นจริง</span>
-      <textarea id="afterModalNote" rows="2"></textarea>
-    </label>
-    <div class="btn-row">
-      <button class="btn btn-primary" id="afterModalSave" value="save">บันทึกผลหลังปรับ</button>
-      <button class="btn btn-ghost" value="cancel">ยกเลิก</button>
-    </div>
-  </form>
-</dialog>
 
 <dialog class="modal" id="pasteModal">
   <div class="modal-body">
