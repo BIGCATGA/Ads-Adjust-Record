@@ -8,7 +8,7 @@
    1. ค่าคงที่
    ───────────────────────────────────────────────────────────── */
 
-const APP_VERSION = '1.10.0';
+const APP_VERSION = '1.11.0';
 const LS_CONFIG = 'aar.config.v1';
 
 /* ═══════════════════════════════════════════════════════════════
@@ -730,7 +730,8 @@ const Store = {
       const data = await this.call('list');
       // โหลดหมวดหมู่และแคมเปญก่อน เพราะ record อ้างอิงข้อมูลสองอย่างนี้
       if (Array.isArray(data.products) && data.products.length) Taxonomy.set(data.products);
-      this.campaigns = data.campaigns || [];
+      this.campaigns = mergeCampaigns(this.campaigns, data.campaigns || []);
+      this.serverVersion = String(data.version || '');
       this.records = (data.records || []).map(normalizeRecord);
       this.rev++;
       this.online = true;
@@ -747,6 +748,9 @@ const Store = {
       return { mode: 'error', error: this.lastError };
     }
   },
+
+  /** เวอร์ชัน Code.gs ที่ deploy อยู่จริง — ใช้เตือนเมื่อยังไม่ได้อัปเดต */
+  serverVersion: '',
 
   newId() {
     return 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -862,6 +866,44 @@ function recProduct(rec) {
 function recGroup(rec) {
   const p = recProduct(rec);
   return p ? Taxonomy.groupOf(p) : String(rec.product_group || '').trim();
+}
+
+/** "1.3.0" >= "1.3.0" */
+function versionAtLeast(have, want) {
+  const a = String(have || '').split('.').map(n => parseInt(n, 10) || 0);
+  const b = String(want || '').split('.').map(n => parseInt(n, 10) || 0);
+  for (let i = 0; i < 3; i++) {
+    if ((a[i] || 0) > (b[i] || 0)) return true;
+    if ((a[i] || 0) < (b[i] || 0)) return false;
+  }
+  return true;
+}
+
+/** ชีตยังไม่รู้จักคอลัมน์ budget/bid หรือเปล่า */
+function sheetNeedsUpgrade() {
+  if (!Store.online || !Store.serverVersion) return false;
+  return !versionAtLeast(Store.serverVersion, '1.3.0');
+}
+
+/**
+ * รวมรายการแคมเปญจากชีตกับที่มีอยู่ในเครื่อง
+ * ค่าจากชีตชนะเสมอ "ยกเว้น" ช่องที่ชีตไม่มีค่ามาให้ — ช่องนั้นเก็บของเดิมไว้
+ * (กันงบ/bid หายตอนชีตยังไม่มีคอลัมน์เหล่านี้)
+ */
+const KEEP_IF_MISSING = ['budget', 'bid', 'settings_updated'];
+function mergeCampaigns(local, remote) {
+  const byName = new Map((local || []).map(c => [String(c.name || '').trim(), c]));
+  return (remote || []).map(rc => {
+    const prev = byName.get(String(rc.name || '').trim());
+    if (!prev) return rc;
+    const out = { ...rc };
+    for (const k of KEEP_IF_MISSING) {
+      const incoming = rc[k];
+      const missing = incoming === undefined || incoming === null || String(incoming).trim() === '';
+      if (missing && prev[k] !== undefined && String(prev[k]).trim() !== '') out[k] = prev[k];
+    }
+    return out;
+  });
 }
 
 function normalizeRecord(raw) {
@@ -2917,7 +2959,65 @@ function budgetRows() {
   return out.sort((a, b) => (b.lastTouch || '').localeCompare(a.lastTouch || ''));
 }
 
+function renderBudgetWarning() {
+  const host = $('#budgetWarn');
+  if (!host) return;
+  host.innerHTML = '';
+
+  if (sheetNeedsUpgrade()) {
+    host.append(el('div', { class: 'banner bad' },
+      el('span', { class: 'icon' }, '⚠️'),
+      el('span', {},
+        el('b', {}, 'ชีตยังเป็น Code.gs เวอร์ชันเก่า '),
+        `(ที่ deploy อยู่คือ ${Store.serverVersion} · ต้องการ 1.3.0 ขึ้นไป) `,
+        'ชีตยังไม่มีคอลัมน์ ', el('code', {}, 'budget'), ' / ', el('code', {}, 'bid'),
+        ' ค่าที่ตั้งตอนนี้จึง ', el('b', {}, 'เก็บอยู่ในเบราว์เซอร์เครื่องนี้เท่านั้น'),
+        ' — เปิดจากเครื่องอื่นจะไม่เห็น',
+        el('div', { style: 'margin-top:8px' },
+          'วิธีแก้: เปิด Apps Script > วาง Code.gs ใหม่ทับ > Deploy › Manage deployments › ✏️ › New version › Deploy'))));
+  }
+
+  // มีค่าที่ยังค้างอยู่ในบันทึกเก่า ยังไม่ได้ย้ายมาเก็บกับแคมเปญ
+  const legacy = budgetRows().filter(r =>
+    (r.budget && r.budget.legacy) || (r.bid && r.bid.legacy));
+  if (legacy.length) {
+    host.append(el('div', { class: 'banner warn' },
+      el('span', { class: 'icon' }, '📦'),
+      el('span', {},
+        `มี ${legacy.length} แคมเปญที่ค่างบ/bid ยังอ่านมาจากบันทึกเก่าอยู่ ย้ายมาเก็บกับแคมเปญให้เรียบร้อยได้เลย`,
+        el('div', { style: 'margin-top:8px' },
+          el('button', { class: 'btn btn-sm btn-primary', id: 'migrateLegacy' },
+            'ย้ายค่าทั้งหมดมาเก็บกับแคมเปญ')))));
+    $('#migrateLegacy').addEventListener('click', migrateLegacySettings);
+  }
+}
+
+/** ย้ายงบ/bid ที่ยังอ่านจากบันทึกเก่า มาเก็บกับแคมเปญให้ครบทีเดียว */
+async function migrateLegacySettings() {
+  const rows = budgetRows().filter(r =>
+    (r.budget && r.budget.legacy) || (r.bid && r.bid.legacy));
+  if (!rows.length) return;
+  const btn = $('#migrateLegacy');
+  btn.disabled = true; btn.classList.add('is-busy'); btn.textContent = 'กำลังย้าย…';
+  let done = 0;
+  try {
+    for (const r of rows) {
+      await Store.saveCampaignSettings(r.campaign, {
+        budget: r.budget ? r.budget.value : '',
+        bid: r.bid ? r.bid.value : ''
+      });
+      done++;
+    }
+    toast(`ย้ายค่าให้ ${done} แคมเปญแล้ว`, 3800);
+  } catch (err) {
+    toast(`ย้ายได้ ${done} แคมเปญแล้วเจอปัญหา: ${err.message || err}`, 6000);
+  } finally {
+    refreshAll();
+  }
+}
+
 function renderBudgetPage() {
+  renderBudgetWarning();
   renderCleanupCard();
   const all = budgetRows();
   const group = $('#budgetGroup').value;
@@ -3993,10 +4093,23 @@ function renderCampaignAdder() {
 }
 
 /** กล่องบอกว่าตอนนี้ต่อชีตไหนอยู่ และต่อด้วยค่าจากไหน */
+function upgradeBanner() {
+  if (!sheetNeedsUpgrade()) return null;
+  return el('div', { class: 'banner bad' },
+    el('span', { class: 'icon' }, '⚠️'),
+    el('span', {},
+      el('b', {}, 'Code.gs ในชีตเป็นเวอร์ชันเก่า '),
+      `(${Store.serverVersion}) `,
+      'ทำให้งบ/bid ที่ตั้งไว้ไม่ถูกเขียนลงชีต — วาง Code.gs ใหม่ทับแล้ว Deploy › Manage deployments › ✏️ › New version'));
+}
+
 function renderConnStatusBox() {
   const box = $('#connSource');
   if (!box) return;
   box.innerHTML = '';
+
+  const up = upgradeBanner();
+  if (up) box.append(up);
 
   if (!Store.configured) {
     box.append(el('div', { class: 'banner warn' },
