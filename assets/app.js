@@ -510,6 +510,25 @@ const Store = {
     return this.campaigns.find(c => c.name === String(name || '').trim()) || null;
   },
 
+  /** ตั้งงบ/bid ของแคมเปญ — เก็บที่ชีต CAMPAIGNS ไม่สร้างบันทึกในไทม์ไลน์ */
+  async saveCampaignSettings(name, { budget, bid }) {
+    name = String(name || '').trim();
+    if (!name) return;
+    const patch = {
+      name,
+      budget: budget === '' || budget === null || budget === undefined ? '' : String(budget),
+      bid: bid === '' || bid === null || bid === undefined ? '' : String(bid),
+      settings_updated: todayISO(),
+      active: true
+    };
+    const i = this.campaigns.findIndex(c => c.name === name);
+    if (i >= 0) this.campaigns[i] = { ...this.campaigns[i], ...patch };
+    else this.campaigns.push({ ...patch, product: '', note: '' });
+    this.rev++;
+    if (this.online) await this.call('saveCampaign', { campaign: patch });
+    this.saveCache();
+  },
+
   async saveCampaignMeta(name, product) {
     name = String(name || '').trim();
     if (!name) return;
@@ -805,7 +824,7 @@ const Form = {
     this.buildTaxonomySelects();
 
     $('#f_date').value = todayISO();
-    $('#f_campaign').addEventListener('input', () => { this.onCampaignInput(); this.renderPrevSettings(); });
+    $('#f_campaign').addEventListener('input', () => this.onCampaignInput());
     $('#f_campaign').addEventListener('change', () => { this.onCampaignInput(); this.refreshBaseline(); });
     $('#f_product').addEventListener('change', () => {
       this.productTouched = true;              // ผู้ใช้เลือกเอง — ห้ามระบบทับ
@@ -948,31 +967,6 @@ const Form = {
     this.renderRecentChips();
   },
 
-  /** บอกใต้ช่องงบ/bid ว่าเดิมตั้งไว้เท่าไหร่ พร้อมปุ่มกดใช้ค่าเดิม */
-  renderPrevSettings() {
-    const campaign = $('#f_campaign').value.trim();
-    for (const [key, dec] of [['budget', 0], ['bid', 2]]) {
-      const host = $(`#prev_${key}`);
-      if (!host) continue;
-      const prev = campaign ? latestSetting(campaign, key) : null;
-
-      // วาดใหม่เฉพาะตอนเนื้อหาเปลี่ยนจริง — ถ้าล้างทุกครั้ง ปุ่ม "ใช้ค่าเดิม"
-      // จะหายไปตอน blur ของช่องแคมเปญ ทำให้กดไม่ติด
-      const sig = campaign ? `${campaign}|${prev ? prev.value + '@' + prev.date : 'none'}` : '';
-      if (host.dataset.sig === sig) continue;
-      host.dataset.sig = sig;
-
-      host.innerHTML = '';
-      if (!campaign) continue;
-      if (!prev) { host.textContent = 'ยังไม่เคยบันทึกค่านี้'; continue; }
-      host.append(`เดิม ${fmt(prev.value, dec)} ฿ (${relativeDay(prev.date)}) `);
-      host.append(el('button', {
-        type: 'button',
-        onclick: () => { $(`#f_${key}`).value = prev.value; }
-      }, 'ใช้ค่าเดิม'));
-    }
-  },
-
   /** หาบันทึกก่อนหน้าของแคมเปญเดียวกัน แล้วใช้ตัวเลขของมันเป็นฐานเปรียบเทียบ
    *  ไม่ก๊อปตัวเลขลงช่อง — แค่เอามาโชว์และคำนวณ % ให้ตอนพิมพ์ */
   refreshBaseline() {
@@ -998,7 +992,6 @@ const Form = {
     this.fillDefaultDates();
     this.renderBaselineStrip();
     this.updateComparison();
-    this.renderPrevSettings();
 
     const sum = $('#numbersSummary');
     if (sum) {
@@ -1144,8 +1137,6 @@ const Form = {
     $('#f_reason').value = rec?.reason || '';
     $('#f_expected').value = rec?.expected || '';
     $('#f_result_note').value = rec?.result_note || '';
-    $('#f_budget').value = rec?.budget ?? '';
-    $('#f_bid').value = rec?.bid ?? '';
 
     this.selectedTags = new Set(String(rec?.tags || '').split('|').map(s => s.trim()).filter(Boolean));
     $$('#tagChips .chip').forEach(c =>
@@ -1203,9 +1194,6 @@ const Form = {
       reason: $('#f_reason').value.trim(),
       expected: $('#f_expected').value.trim(),
       result_note: $('#f_result_note').value.trim(),
-      // ค่าตั้งค่าปัจจุบัน — เก็บเฉพาะตอนที่กรอก จะได้รู้ว่า "เปลี่ยนเมื่อไหร่"
-      budget: $('#f_budget').value.trim(),
-      bid: $('#f_bid').value.trim(),
       status: hasNumbers(readBlock('after')) ? 'มีผลแล้ว' : 'รอผล'
     };
     for (const side of ['before', 'after']) {
@@ -2606,12 +2594,20 @@ function openRecordNumbers(rec) {
    10a-4. หน้า งบ & Bid ปัจจุบัน
    ───────────────────────────────────────────────────────────── */
 
-/** ค่าล่าสุดที่กรอกไว้ของฟิลด์หนึ่ง พร้อมวันที่ที่ตั้งค่านั้น */
+/**
+ * ค่างบ/bid ที่ตั้งไว้ตอนนี้ของแคมเปญ
+ * ที่อยู่จริงคือชีต CAMPAIGNS — ส่วนการไล่ดูบันทึกเก่าเก็บไว้เผื่อข้อมูลที่บันทึกไว้
+ * ตอนเวอร์ชันก่อน (ตอนนั้นค่าถูกเก็บติดไปกับบันทึกรายวัน)
+ */
 function latestSetting(campaign, key) {
+  const meta = Store.campaign(campaign);
+  const v = meta ? num(meta[key]) : null;
+  if (v !== null) return { value: v, date: meta.settings_updated || '', legacy: false };
+
   for (const r of Store.sorted()) {           // sorted() = ใหม่ก่อนเก่า
     if (r.campaign !== campaign) continue;
-    const v = num(r[key]);
-    if (v !== null) return { value: v, date: r.date };
+    const old = num(r[key]);
+    if (old !== null) return { value: old, date: r.date, legacy: true };
   }
   return null;
 }
@@ -2639,6 +2635,7 @@ function budgetRows() {
 }
 
 function renderBudgetPage() {
+  renderCleanupCard();
   const all = budgetRows();
   const group = $('#budgetGroup').value;
   const q = $('#budgetSearch').value.trim().toLowerCase();
@@ -2693,10 +2690,14 @@ function renderBudgetPage() {
     const cell = (setting, dec, unit) => setting
       ? el('td', { class: 'num val-strong' }, fmt(setting.value, dec) + unit)
       : el('td', { class: 'num val-none' }, '—');
-    const when = setting => setting
-      ? el('td', {}, el('span', { class: `stale${stale ? ' is-old' : ''}` },
-          `${thaiDate(setting.date)} · ${relativeDay(setting.date)}`))
-      : el('td', { class: 'val-none' }, 'ยังไม่เคยบันทึก');
+    const when = setting => {
+      if (!setting) return el('td', { class: 'val-none' }, 'ยังไม่เคยตั้ง');
+      if (!setting.date) return el('td', { class: 'val-none' }, 'ไม่ทราบวันที่');
+      return el('td', {}, el('span', {
+        class: `stale${stale ? ' is-old' : ''}`,
+        title: setting.legacy ? 'ค่านี้มาจากบันทึกเก่า — กด "ตั้งค่า" หนึ่งครั้งเพื่อย้ายมาเก็บกับแคมเปญ' : ''
+      }, `${thaiDate(setting.date)} · ${relativeDay(setting.date)}${setting.legacy ? ' (จากบันทึกเก่า)' : ''}`));
+    };
 
     tbody.append(el('tr', { class: stale ? 'row-warn' : '' },
       el('td', {}, el('b', {}, r.campaign)),
@@ -2712,29 +2713,149 @@ function renderBudgetPage() {
             overBid ? el('span', { title: 'CPC จริงสูงกว่า Max CPC ที่ตั้งไว้' }, ' ⚠') : null),
       el('td', {},
         el('button', {
-          class: 'btn btn-sm', onclick: () => openBudgetEdit(r)
-        }, 'อัปเดตค่า'))));
+          class: 'btn btn-sm', onclick: () => Settings.open(r)
+        }, 'ตั้งค่า'))));
   }
 }
 
-/** แก้งบ/bid เร็วๆ จากหน้านี้ — สร้างเป็นบันทึกใหม่ เพื่อให้รู้ว่าเปลี่ยนวันไหน */
-function openBudgetEdit(row) {
-  Form.reset();
-  $('#f_campaign').value = row.campaign;
-  Form.onCampaignInput();
-  Form.refreshBaseline();
-  $('#f_budget').value = row.budget ? row.budget.value : '';
-  $('#f_bid').value = row.bid ? row.bid.value : '';
-  $('#f_change_detail').value = 'ปรับงบ / bid';
-  Form.selectedTags = new Set(['ปรับงบประมาณ']);
-  $$('#tagChips .chip').forEach(c =>
-    c.setAttribute('aria-pressed', String(Form.selectedTags.has(c.dataset.tag))));
-  showTab('new');
-  setTimeout(() => $('#f_budget')?.focus(), 200);
+/**
+ * แก้งบ/bid ของแคมเปญ — เก็บกับตัวแคมเปญเท่านั้น ไม่แตะไทม์ไลน์
+ * ถ้าอยากให้ไทม์ไลน์จำด้วย มีปุ่ม "จดลงไทม์ไลน์ด้วย" ให้กดแยก
+ */
+const Settings = {
+  campaign: '',
+  built: false,
+
+  build() {
+    if (this.built) return;
+    $('#setSave').addEventListener('click', e => { e.preventDefault(); this.save(); });
+    $('#setCancel').addEventListener('click', e => { e.preventDefault(); $('#settingsModal').close(); });
+    $('#setLog').addEventListener('click', e => { e.preventDefault(); this.save(true); });
+    $('#settingsModal').addEventListener('keydown', e => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); this.save(); }
+    });
+    this.built = true;
+  },
+
+  open(row) {
+    this.build();
+    this.campaign = row.campaign;
+    $('#setSub').textContent = row.campaign + (row.product ? ` · ${row.product}` : '');
+    $('#set_budget').value = row.budget ? row.budget.value : '';
+    $('#set_bid').value = row.bid ? row.bid.value : '';
+    $('#settingsModal').showModal();
+    setTimeout(() => $('#set_budget')?.focus(), 120);
+  },
+
+  /** alsoLog = เปิดฟอร์มบันทึกให้ต่อ เผื่ออยากจดว่าวันนี้ปรับงบ */
+  async save(alsoLog = false) {
+    const budget = $('#set_budget').value.trim();
+    const bid = $('#set_bid').value.trim();
+    const btn = alsoLog ? $('#setLog') : $('#setSave');
+    btn.disabled = true; btn.classList.add('is-busy');
+    try {
+      await Store.saveCampaignSettings(this.campaign, { budget, bid });
+      $('#settingsModal').close();
+      toast(Store.online ? 'บันทึกค่าลง Google Sheet แล้ว' : 'บันทึกค่าในเครื่องแล้ว');
+      refreshAll();
+      if (alsoLog) {
+        Form.reset();
+        $('#f_campaign').value = this.campaign;
+        Form.onCampaignInput();
+        Form.refreshBaseline();
+        const bits = [];
+        if (budget) bits.push(`งบ → ${budget} บาท/วัน`);
+        if (bid) bits.push(`Max CPC → ${bid} บาท`);
+        $('#f_change_detail').value = bits.join(' · ');
+        Form.selectedTags = new Set(['ปรับงบประมาณ']);
+        $$('#tagChips .chip').forEach(c =>
+          c.setAttribute('aria-pressed', String(Form.selectedTags.has(c.dataset.tag))));
+        showTab('new');
+        setTimeout(() => $('#f_change_detail')?.focus(), 200);
+      }
+    } catch (err) {
+      toast('บันทึกไม่สำเร็จ: ' + (err.message || err), 5000);
+    } finally {
+      btn.disabled = false; btn.classList.remove('is-busy');
+    }
+  }
+};
+
+/* ── เก็บกวาดบันทึกที่เวอร์ชันก่อนสร้างไว้ตอนกด "อัปเดตค่า" ────── */
+
+/** บันทึกที่เข้าข่าย: มีงบ/bid ติดอยู่ และไม่มีตัวเลขวัดผล */
+function legacySettingRecords() {
+  return Store.sorted().filter(r => {
+    const hasSetting = num(r.budget) !== null || num(r.bid) !== null;
+    if (!hasSetting) return false;
+    if (isMeasured(r)) return false;                  // มีตัวเลขวัดผล = ของจริง อย่าแตะ
+    const t = String(r.change_detail || '').trim();
+    return t === '' || t === 'ปรับงบ / bid' || /^งบ →|^Max CPC →/.test(t);
+  });
+}
+
+function renderCleanupCard() {
+  const card = $('#budgetCleanup');
+  if (!card) return;
+  const list = legacySettingRecords();
+  card.hidden = list.length === 0;
+  if (card.hidden) return;
+
+  const tbody = $('#cleanupTable').querySelector('tbody');
+  tbody.innerHTML = '';
+  for (const r of list) {
+    const cb = el('input', { type: 'checkbox', checked: true, 'data-id': r.id,
+      'aria-label': `เลือกบันทึกวันที่ ${thaiDate(r.date)}` });
+    tbody.append(el('tr', {},
+      el('td', {}, cb),
+      el('td', {}, thaiDate(r.date)),
+      el('td', {}, r.campaign || '—'),
+      el('td', {}, String(r.change_detail || '').trim() || el('i', { class: 'val-none' }, 'ไม่มีข้อความ')),
+      el('td', {}, num(r.budget) !== null ? fmt(num(r.budget), 0) + ' ฿' : '—'),
+      el('td', {}, num(r.bid) !== null ? fmt(num(r.bid), 2) + ' ฿' : '—')));
+  }
+  $('#cleanupCount').textContent = `พบ ${list.length} รายการ`;
+}
+
+async function runCleanup() {
+  const ids = $$('#cleanupTable input[type="checkbox"]:checked').map(c => c.dataset.id);
+  if (!ids.length) { toast('ยังไม่ได้เลือกรายการ'); return; }
+  if (!confirm(`ย้ายค่างบ/bid ไปเก็บกับแคมเปญ แล้วลบ ${ids.length} บันทึกนี้ถาวร?`)) return;
+
+  const btn = $('#cleanupRun');
+  btn.disabled = true; btn.classList.add('is-busy'); btn.textContent = 'กำลังย้ายและลบ…';
+  let moved = 0, removed = 0;
+  try {
+    // ย้ายค่าก่อน: ของบันทึกที่ใหม่สุดของแต่ละแคมเปญเท่านั้น จะได้ไม่ทับด้วยค่าเก่า
+    const byCampaign = new Map();
+    for (const r of Store.sorted()) {              // ใหม่ → เก่า
+      if (!ids.includes(r.id) || !r.campaign) continue;
+      if (!byCampaign.has(r.campaign)) byCampaign.set(r.campaign, r);
+    }
+    for (const [name, rec] of byCampaign) {
+      const meta = Store.campaign(name);
+      const budget = num(meta?.budget) !== null ? meta.budget : (num(rec.budget) !== null ? rec.budget : '');
+      const bid = num(meta?.bid) !== null ? meta.bid : (num(rec.bid) !== null ? rec.bid : '');
+      if (budget === '' && bid === '') continue;
+      await Store.saveCampaignSettings(name, { budget, bid });
+      moved++;
+    }
+    for (const id of ids) { await Store.remove(id); removed++; }
+    toast(`ย้ายค่าให้ ${moved} แคมเปญ และลบ ${removed} บันทึกแล้ว`, 4200);
+    refreshAll();
+  } catch (err) {
+    toast(`ลบได้ ${removed} รายการแล้วเจอปัญหา: ${err.message || err}`, 6000);
+    refreshAll();
+  } finally {
+    btn.disabled = false; btn.classList.remove('is-busy'); btn.textContent = 'ย้ายค่าแล้วลบที่เลือก';
+  }
 }
 
 function initBudgetPage() {
   $('#budgetGroup').addEventListener('change', renderBudgetPage);
+  $('#cleanupRun').addEventListener('click', runCleanup);
+  $('#cleanupNone').addEventListener('click', () =>
+    $$('#cleanupTable input[type="checkbox"]').forEach(c => { c.checked = false; }));
   $('#budgetSearch').addEventListener('input', renderBudgetPage);
   $('#budgetCopy').addEventListener('click', () => {
     const rows = budgetRows();
