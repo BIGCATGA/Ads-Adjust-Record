@@ -114,20 +114,6 @@
       </div>
       <p class="hint-line" id="campaignHint"></p>
 
-      <div class="section-label">ค่าที่ตั้งไว้ตอนนี้ <span class="field-unit">กรอกเฉพาะวันที่เปลี่ยน — หน้า "งบ &amp; Bid" จะดึงค่าล่าสุดไปแสดง</span></div>
-      <div class="field-row cols-2">
-        <label class="field">
-          <span class="field-label">งบต่อวัน <span class="field-unit">บาท</span></span>
-          <input type="number" id="f_budget" inputmode="decimal" step="1" min="0" placeholder="เช่น 500">
-          <span class="field-prev" id="prev_budget"></span>
-        </label>
-        <label class="field">
-          <span class="field-label">Max CPC bid <span class="field-unit">บาท</span></span>
-          <input type="number" id="f_bid" inputmode="decimal" step="0.01" min="0" placeholder="เช่น 14.50">
-          <span class="field-prev" id="prev_bid"></span>
-        </label>
-      </div>
-
       <div class="section-label">ปรับอะไรบ้าง</div>
       <div class="chips" id="tagChips"></div>
 
@@ -421,6 +407,28 @@
     </div>
     <p class="card-note" style="margin-top:12px">"CPC จริงล่าสุด" มาจากตัวเลขวัดผลครั้งล่าสุด — ถ้าสูงกว่า Max CPC มาก แปลว่า bid ที่ตั้งไว้อาจไม่ใช่ตัวคุมจริง</p>
   </div>
+
+  <div class="card" id="budgetCleanup" hidden>
+    <div class="card-head">
+      <h2>เก็บกวาดบันทึกที่หน้านี้เคยสร้างไว้</h2>
+      <span class="card-note">เวอร์ชันก่อนหน้า การกด "อัปเดตค่า" จะสร้างบันทึกลงไทม์ไลน์ด้วย ตอนนี้ไม่สร้างแล้ว</span>
+    </div>
+    <div class="banner warn">
+      <span class="icon" aria-hidden="true">⚠️</span>
+      <span>ค่างบ/bid ในบันทึกเหล่านี้จะถูกย้ายไปเก็บกับแคมเปญให้ก่อนลบ — ตัวเลขในตารางด้านบนจะไม่หาย</span>
+    </div>
+    <div class="table-wrap scroll-md" style="margin-top:14px">
+      <table class="data table-left" id="cleanupTable">
+        <thead><tr><th class="w-time"></th><th>วันที่</th><th>แคมเปญ</th><th>สิ่งที่ปรับ</th><th>งบ</th><th>Bid</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-danger" id="cleanupRun">ย้ายค่าแล้วลบที่เลือก</button>
+      <button class="btn btn-ghost" id="cleanupNone">ไม่เลือกทั้งหมด</button>
+      <span class="card-note" id="cleanupCount"></span>
+    </div>
+  </div>
 </section>
 
 <!-- ══════════════ 6. ตั้งค่า ══════════════ -->
@@ -519,6 +527,34 @@
 
 <div class="toast" id="toast"></div>
 
+
+<!-- ตั้งงบ / bid ของแคมเปญ — เก็บกับแคมเปญ ไม่สร้างบันทึกในไทม์ไลน์ -->
+<dialog class="modal modal-sm" id="settingsModal">
+  <form method="dialog" class="modal-x"><button class="icon-btn" value="cancel" aria-label="ปิด"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></form>
+  <div class="modal-body">
+    <h2>ตั้งงบ / Bid</h2>
+    <p class="card-note" id="setSub"></p>
+
+    <div class="field-row cols-2" style="margin-top:16px">
+      <label class="field">
+        <span class="field-label">งบต่อวัน <span class="field-unit">บาท</span></span>
+        <input type="number" id="set_budget" inputmode="decimal" step="1" min="0" placeholder="เช่น 500">
+      </label>
+      <label class="field">
+        <span class="field-label">Max CPC bid <span class="field-unit">บาท</span></span>
+        <input type="number" id="set_bid" inputmode="decimal" step="0.01" min="0" placeholder="เช่น 14.50">
+      </label>
+    </div>
+    <p class="card-note" style="margin-top:12px">ค่านี้เก็บไว้กับแคมเปญ ไม่ใช่บันทึกรายวัน — เปลี่ยนกี่ครั้งไทม์ไลน์ก็ไม่รก<br>ถ้าอยากให้ไทม์ไลน์จำว่า "วันนี้ปรับงบ" ให้ไปจดที่หน้าบันทึกใหม่แยกต่างหาก</p>
+
+    <div class="btn-row">
+      <button class="btn btn-primary" id="setSave">บันทึกค่า</button>
+      <button class="btn btn-ghost" id="setCancel">ยกเลิก</button>
+      <span class="spacer"></span>
+      <button class="btn btn-sm btn-ghost" id="setLog">จดลงไทม์ไลน์ด้วย</button>
+    </div>
+  </div>
+</dialog>
 
 <!-- ใส่ตัวเลขวัดผล — ป๊อปอัพ ไม่ต้องออกจากหน้าที่ดูอยู่ -->
 <dialog class="modal" id="measureModal">
