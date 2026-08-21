@@ -755,17 +755,21 @@ function normalizeRecord(raw) {
    5. แท็บ
    ───────────────────────────────────────────────────────────── */
 
-const PANELS = ['new', 'timeline', 'dashboard', 'trend', 'data'];
+const PANELS = ['new', 'timeline', 'dashboard', 'trend', 'budget', 'data'];
 
 function showTab(name) {
   for (const p of PANELS) {
-    $(`#tab-${p}`).setAttribute('aria-selected', String(p === name));
+    const tab = $(`#tab-${p}`);
+    tab.setAttribute('aria-selected', String(p === name));
+    // roving tabindex: Tab เข้ามาที่เมนูครั้งเดียว แล้วใช้ลูกศรเลื่อนต่อ (มาตรฐาน tablist)
+    tab.tabIndex = p === name ? 0 : -1;
     $(`#panel-${p}`).hidden = p !== name;
   }
   location.hash = name;
   if (name === 'timeline') renderTimeline();
   if (name === 'dashboard') renderDashboard();
   if (name === 'trend') renderTrend();
+  if (name === 'budget') renderBudgetPage();
   if (name === 'data') { renderTaxonomyEditor(); renderConnStatusBox(); }
 }
 
@@ -801,7 +805,7 @@ const Form = {
     this.buildTaxonomySelects();
 
     $('#f_date').value = todayISO();
-    $('#f_campaign').addEventListener('input', () => this.onCampaignInput());
+    $('#f_campaign').addEventListener('input', () => { this.onCampaignInput(); this.renderPrevSettings(); });
     $('#f_campaign').addEventListener('change', () => { this.onCampaignInput(); this.refreshBaseline(); });
     $('#f_product').addEventListener('change', () => {
       this.productTouched = true;              // ผู้ใช้เลือกเอง — ห้ามระบบทับ
@@ -881,6 +885,49 @@ const Form = {
         : 'แคมเปญใหม่ — เลือกสินค้าด้วย ระบบจะจำไว้ใช้ครั้งต่อไป';
   },
 
+  /**
+   * แคมเปญที่แตะบ่อยสุดช่วง 14 วัน — กดชิปแทนการพิมพ์ชื่อยาวๆ
+   * เรียงตามจำนวนครั้ง แล้วค่อยตามด้วยความสดใหม่ สูงสุด 6 ตัว
+   */
+  renderRecentChips() {
+    const wrap = $('#recentCampaigns');
+    const box = $('#recentChips');
+    const since = isoOffset(-14);
+    const tally = new Map();
+    for (const r of Store.sorted()) {
+      if (!r.campaign || r.date < since) continue;
+      const cur = tally.get(r.campaign) || { n: 0, last: r.date };
+      cur.n++;
+      if (r.date > cur.last) cur.last = r.date;
+      tally.set(r.campaign, cur);
+    }
+    const top = [...tally.entries()]
+      .sort((a, b) => b[1].n - a[1].n || (a[1].last < b[1].last ? 1 : -1))
+      .slice(0, 6);
+
+    wrap.hidden = top.length < 2;   // มีอันเดียวก็ไม่ต้องมีชิปให้เลือก
+    if (wrap.hidden) return;
+
+    const active = $('#f_campaign').value.trim();
+    box.innerHTML = '';
+    for (const [name, info] of top) {
+      const btn = el('button', {
+        type: 'button', class: 'chip chip-campaign',
+        'aria-pressed': String(name === active),
+        title: `${name} — ปรับ ${info.n} ครั้งใน 14 วัน`,
+        onclick: () => {
+          $('#f_campaign').value = name;
+          this.onCampaignInput();
+          this.refreshBaseline();
+          this.renderRecentChips();
+          $('#f_change_detail').focus();
+        }
+      }, name);
+      btn.append(el('small', {}, String(info.n)));
+      box.append(btn);
+    }
+  },
+
   refreshCampaignList() {
     const dl = $('#campaignList');
     dl.innerHTML = '';
@@ -897,6 +944,32 @@ const Form = {
       const last = Store.sorted()[0];
       field.value = last?.campaign || Store.campaigns[0]?.name || '';
       if (field.value) { this.onCampaignInput(); this.refreshBaseline(); }
+    }
+    this.renderRecentChips();
+  },
+
+  /** บอกใต้ช่องงบ/bid ว่าเดิมตั้งไว้เท่าไหร่ พร้อมปุ่มกดใช้ค่าเดิม */
+  renderPrevSettings() {
+    const campaign = $('#f_campaign').value.trim();
+    for (const [key, dec] of [['budget', 0], ['bid', 2]]) {
+      const host = $(`#prev_${key}`);
+      if (!host) continue;
+      const prev = campaign ? latestSetting(campaign, key) : null;
+
+      // วาดใหม่เฉพาะตอนเนื้อหาเปลี่ยนจริง — ถ้าล้างทุกครั้ง ปุ่ม "ใช้ค่าเดิม"
+      // จะหายไปตอน blur ของช่องแคมเปญ ทำให้กดไม่ติด
+      const sig = campaign ? `${campaign}|${prev ? prev.value + '@' + prev.date : 'none'}` : '';
+      if (host.dataset.sig === sig) continue;
+      host.dataset.sig = sig;
+
+      host.innerHTML = '';
+      if (!campaign) continue;
+      if (!prev) { host.textContent = 'ยังไม่เคยบันทึกค่านี้'; continue; }
+      host.append(`เดิม ${fmt(prev.value, dec)} ฿ (${relativeDay(prev.date)}) `);
+      host.append(el('button', {
+        type: 'button',
+        onclick: () => { $(`#f_${key}`).value = prev.value; }
+      }, 'ใช้ค่าเดิม'));
     }
   },
 
@@ -925,6 +998,7 @@ const Form = {
     this.fillDefaultDates();
     this.renderBaselineStrip();
     this.updateComparison();
+    this.renderPrevSettings();
 
     const sum = $('#numbersSummary');
     if (sum) {
@@ -1070,6 +1144,8 @@ const Form = {
     $('#f_reason').value = rec?.reason || '';
     $('#f_expected').value = rec?.expected || '';
     $('#f_result_note').value = rec?.result_note || '';
+    $('#f_budget').value = rec?.budget ?? '';
+    $('#f_bid').value = rec?.bid ?? '';
 
     this.selectedTags = new Set(String(rec?.tags || '').split('|').map(s => s.trim()).filter(Boolean));
     $$('#tagChips .chip').forEach(c =>
@@ -1127,6 +1203,9 @@ const Form = {
       reason: $('#f_reason').value.trim(),
       expected: $('#f_expected').value.trim(),
       result_note: $('#f_result_note').value.trim(),
+      // ค่าตั้งค่าปัจจุบัน — เก็บเฉพาะตอนที่กรอก จะได้รู้ว่า "เปลี่ยนเมื่อไหร่"
+      budget: $('#f_budget').value.trim(),
+      bid: $('#f_bid').value.trim(),
       status: hasNumbers(readBlock('after')) ? 'มีผลแล้ว' : 'รอผล'
     };
     for (const side of ['before', 'after']) {
@@ -1201,6 +1280,8 @@ const Form = {
 
     const btn = $('#saveBtn');
     btn.disabled = true;
+    btn.classList.add('is-busy');
+    btn.setAttribute('aria-busy', 'true');
     $('#saveAddBtn').disabled = true;
     btn.textContent = 'กำลังบันทึก…';
     try {
@@ -1240,6 +1321,8 @@ const Form = {
       toast('บันทึกไม่สำเร็จ: ' + (err.message || err), 5000);
     } finally {
       btn.disabled = false;
+      btn.classList.remove('is-busy');
+      btn.removeAttribute('aria-busy');
       $('#saveAddBtn').disabled = false;
       btn.textContent = 'บันทึก';
     }
@@ -1634,6 +1717,13 @@ function renderTimeline() {
   const list = filteredRecords();
   $('#timelineCount').textContent = `${list.length} บันทึก`;
 
+  // จอเล็กพับตัวกรองไว้ — ต้องบอกให้เห็นว่ายังกรองอะไรค้างอยู่กี่ช่อง
+  const active = ['#flt_from', '#flt_to', '#flt_group', '#flt_product', '#flt_campaign', '#flt_q']
+    .filter(sel => $(sel).value.trim()).length;
+  const badge = $('#filterBadge');
+  badge.hidden = active === 0;
+  badge.textContent = `${active}`;
+
   // สรุปรวมแบบบรรทัดเดียว (การ์ดสีบนแดชบอร์ดสรุปภาพใหญ่ไปแล้ว)
   const bar = $('#timelineTiles');
   bar.innerHTML = '';
@@ -1709,11 +1799,19 @@ function renderTimeline() {
 
     const actions = el('div', { class: 'rec-actions' },
       el('button', { class: 'btn btn-sm', text: '✎ แก้ไข', onclick: () => { Form.load(rec); showTab('new'); } }));
+    // บันทึกที่มีตัวเลขอยู่แล้ว — เปิดดูเป็นป๊อปอัพ ไม่ต้องออกจากไทม์ไลน์
+    if (isMeasured(rec)) {
+      actions.append(el('button', {
+        class: 'btn btn-sm', text: '📊 ดูตัวเลข',
+        title: 'ดูตัวเลขวัดผลและผลเทียบของบันทึกนี้',
+        onclick: () => openRecordNumbers(rec)
+      }));
+    }
     if (round && round.open) {
       actions.append(el('button', {
         class: 'btn btn-sm btn-primary', text: '＋ ใส่ตัวเลขวัดผล',
-        title: 'สร้างบันทึกใหม่พร้อมตัวเลข เพื่อปิดรอบนี้',
-        onclick: () => startMeasurement(rec.campaign)
+        title: 'ใส่ตัวเลขเพื่อปิดรอบนี้ — เปิดเป็นป๊อปอัพ ไม่ต้องออกจากหน้านี้',
+        onclick: () => Measure.open(rec.campaign)
       }));
     }
     actions.append(el('button', { class: 'btn btn-sm', text: '⧉ ทำซ้ำ', onclick: () => {
@@ -1922,13 +2020,20 @@ function initSidebar() {
   const close = () => {
     document.body.classList.remove('nav-open');
     $('#navScrim').hidden = true;
+    $('#navToggle').setAttribute('aria-expanded', 'false');
+    $('#navToggle').setAttribute('aria-label', 'เปิดเมนู');
   };
   const open = () => {
     document.body.classList.add('nav-open');
     $('#navScrim').hidden = false;
   };
-  $('#navToggle').addEventListener('click', () =>
-    document.body.classList.contains('nav-open') ? close() : open());
+  $('#navToggle').addEventListener('click', () => {
+    const isOpen = document.body.classList.contains('nav-open');
+    isOpen ? close() : open();
+    $('#navToggle').setAttribute('aria-expanded', String(!isOpen));
+    $('#navToggle').setAttribute('aria-label', isOpen ? 'เปิดเมนู' : 'ปิดเมนู');
+    if (!isOpen) setTimeout(() => $(`#tab-${PANELS.find(p => !$(`#panel-${p}`).hidden)}`)?.focus(), 260);
+  });
   $('#navScrim').addEventListener('click', close);
   for (const p of PANELS) $(`#tab-${p}`).addEventListener('click', close);
   document.addEventListener('keydown', e => {
@@ -2221,7 +2326,7 @@ function renderRoundList(mode = 'auto') {
         el('span', {}, 'รอบนี้ยังไม่ได้ปิด — ',
           el('button', {
             class: 'link', type: 'button',
-            onclick: e => { e.preventDefault(); startMeasurement(round.campaign); }
+            onclick: e => { e.preventDefault(); Measure.open(round.campaign); }
           }, 'บันทึกตัวเลขวัดผลตอนนี้'))));
     }
 
@@ -2245,7 +2350,7 @@ function renderRoundList(mode = 'auto') {
   });
 }
 
-/** พาไปหน้าบันทึกใหม่ พร้อมเปิดกล่องตัวเลขให้เลย — แทนการแก้ช่อง after ด้วยมือ */
+/** เปิดฟอร์มเต็มพร้อมกล่องตัวเลข — ใช้ตอนอยากแก้ทุกช่อง ไม่ใช่แค่ใส่ตัวเลข */
 function startMeasurement(campaign) {
   Form.reset();
   $('#f_campaign').value = campaign;
@@ -2255,6 +2360,363 @@ function startMeasurement(campaign) {
   if (box) box.open = true;
   showTab('new');
   setTimeout(() => $('#before_impressions')?.focus(), 200);
+}
+
+/* ─────────────────────────────────────────────────────────────
+   10a-2. ป๊อปอัพใส่ตัวเลขวัดผล — ไม่ต้องออกจากหน้าที่ดูอยู่
+   ───────────────────────────────────────────────────────────── */
+
+const Measure = {
+  campaign: '',
+  baseline: null,
+  built: false,
+
+  build() {
+    if (this.built) return;
+    buildMetricFields($('#measFields'), 'meas', () => this.onInput());
+    $('#measSave').addEventListener('click', e => { e.preventDefault(); this.save(); });
+    $('#measCancel').addEventListener('click', e => { e.preventDefault(); $('#measureModal').close(); });
+    $('#measFull').addEventListener('click', e => {
+      e.preventDefault();
+      const c = this.campaign;
+      $('#measureModal').close();
+      startMeasurement(c);
+    });
+    // Ctrl+Enter ในป๊อปอัพ = บันทึก เหมือนฟอร์มหลัก
+    $('#measureModal').addEventListener('keydown', e => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); this.save(); }
+    });
+    this.built = true;
+  },
+
+  open(campaign) {
+    this.build();
+    this.campaign = campaign;
+    $('#measCampaignView').textContent = campaign;
+    $('#meas_date').value = todayISO();
+    $('#meas_note').value = '';
+
+    clearAutoFlags('meas');
+    for (const m of METRICS) $('#meas_' + m.key).value = '';
+    $('#meas_start').value = '';
+    $('#meas_end').value = '';
+
+    // ตัวเลขครั้งก่อนของแคมเปญนี้ = ฐานเปรียบเทียบ และเป็นวันเริ่มช่วงใหม่
+    const prev = Store.latestMeasured(campaign, $('#meas_date').value, null);
+    this.baseline = prev ? { record: prev, block: block(prev, 'before') } : null;
+
+    const adj = prev
+      ? Store.adjustmentsSince(campaign, prev.date, $('#meas_date').value, null)
+      : [];
+    $('#measSub').textContent = prev
+      ? `เทียบกับตัวเลขครั้งก่อนวันที่ ${thaiDate(prev.date)}` +
+        (adj.length ? ` · ระหว่างนั้นปรับไป ${adj.length} ครั้ง` : ' · ระหว่างนั้นยังไม่มีการปรับ')
+      : 'ยังไม่มีตัวเลขครั้งก่อนของแคมเปญนี้ — ครั้งนี้จะเป็นค่าตั้งต้น';
+
+    $('#meas_start').value = prev?.before_end || prev?.date || '';
+    $('#meas_end').value = $('#meas_date').value;
+
+    this.renderBaseline();
+    this.onInput();
+    $('#measureModal').showModal();
+    setTimeout(() => $('#meas_impressions')?.focus(), 120);
+  },
+
+  renderBaseline() {
+    const host = $('#measBaseline');
+    host.innerHTML = '';
+    if (!this.baseline) return;
+    const b = solveBlock(this.baseline.block).values;
+    const strip = el('div', { class: 'baseline-strip' },
+      el('span', { class: 'bl-label' }, `ครั้งก่อน ${thaiDate(this.baseline.record.date)}`));
+    for (const m of METRICS_BY_TIER('primary')) {
+      if (b[m.key] === null) continue;
+      strip.append(el('span', { class: 'bl-item' },
+        el('b', {}, m.short), ' ', fmtMetric(m.key, b[m.key])));
+    }
+    host.append(strip);
+  },
+
+  onInput() {
+    applyDerived($('#measFields'), 'meas', $('#measDerived'));
+    const host = $('#measPreview');
+    host.innerHTML = '';
+    if (!this.baseline) return;
+    const cur = readBlock('meas');
+    if (!hasNumbers(cur)) return;
+    const cmp = compareBlocks(this.baseline.block, cur, 'auto');
+    if (!cmp) return;
+    host.append(el('div', { class: 'verdict-panel' },
+      el('div', { class: 'card-head', style: 'margin-bottom:12px' },
+        el('h3', {}, 'เทียบกับตัวเลขครั้งก่อน'),
+        verdictBadge(cmp.verdict)),
+      deltaTiles(cmp)));
+  },
+
+  async save() {
+    const cur = readBlock('meas');
+    if (!hasNumbers(cur)) { toast('ยังไม่ได้กรอกตัวเลข'); return; }
+
+    const rec = {
+      id: Store.newId(),
+      date: $('#meas_date').value || todayISO(),
+      campaign: this.campaign,
+      product: Store.campaign(this.campaign)?.product || '',
+      product_group: '',
+      ad_group: '',
+      tags: '',
+      change_detail: '',          // บันทึกวัดผลล้วน ไม่นับเป็น "การปรับ" ในรอบ
+      reason: '',
+      expected: '',
+      result_note: $('#meas_note').value.trim(),
+      budget: '',
+      bid: '',
+      status: 'มีผลแล้ว'
+    };
+    rec.product_group = rec.product ? Taxonomy.groupOf(rec.product) : '';
+
+    const solved = solveBlock(cur).values;
+    rec.before_start = cur._start;
+    rec.before_end = cur._end;
+    for (const m of METRICS) {
+      rec[`before_${m.key}`] = solved[m.key] === null ? '' : round(solved[m.key], m.dec);
+    }
+    for (const m of METRICS) rec[`after_${m.key}`] = '';
+    rec.after_start = '';
+    rec.after_end = '';
+
+    const btn = $('#measSave');
+    btn.disabled = true; btn.classList.add('is-busy'); btn.textContent = 'กำลังบันทึก…';
+    try {
+      await Store.create(rec);
+      // เติมผลหลังปรับย้อนกลับไปที่บันทึกก่อนหน้า เพื่อให้ชีตอ่านง่ายเหมือนเดิม
+      const prev = Store.latestFor(rec.campaign, rec.date, rec.id);
+      if (prev && !hasNumbers(block(prev, 'after'))) {
+        const patch = { ...prev };
+        for (const m of METRICS) patch[`after_${m.key}`] = rec[`before_${m.key}`];
+        patch.after_start = rec.before_start;
+        patch.after_end = rec.before_end;
+        patch.status = 'มีผลแล้ว';
+        await Store.update(patch);
+      }
+      $('#measureModal').close();
+      toast(Store.online ? 'บันทึกตัวเลขลง Google Sheet แล้ว' : 'บันทึกตัวเลขในเครื่องแล้ว');
+      Form.refreshBaseline();
+      refreshAll();
+    } catch (err) {
+      toast('บันทึกไม่สำเร็จ: ' + (err.message || err), 5000);
+    } finally {
+      btn.disabled = false; btn.classList.remove('is-busy'); btn.textContent = 'บันทึกตัวเลข';
+    }
+  }
+};
+
+/* ─────────────────────────────────────────────────────────────
+   10a-3. ป๊อปอัพดูตัวเลขของบันทึกที่วัดผลไว้แล้ว
+   ───────────────────────────────────────────────────────────── */
+
+function openRecordNumbers(rec) {
+  const host = $('#viewBody');
+  host.innerHTML = '';
+  const b = solveBlock(block(rec, 'before')).values;
+  const days = daysBetween(rec.before_start, rec.before_end);
+
+  host.append(el('h2', {}, 'ตัวเลขวัดผล'));
+  host.append(el('p', { class: 'card-note' },
+    `${rec.campaign} · บันทึกวันที่ ${thaiDate(rec.date)}` +
+    (rec.before_start && rec.before_end
+      ? ` · ช่วงข้อมูล ${thaiDate(rec.before_start)} – ${thaiDate(rec.before_end)}${days ? ` (${days} วัน)` : ''}`
+      : '')));
+
+  // ตารางค่าทุกตัวชี้วัดที่มี
+  const rows = METRICS.filter(m => b[m.key] !== null);
+  const table = el('table', { class: 'data', style: 'margin-top:14px' },
+    el('thead', {}, el('tr', {}, el('th', {}, 'ตัวชี้วัด'), el('th', { class: 'num' }, 'ค่า'))),
+    el('tbody', {}, rows.map(m => el('tr', {},
+      el('td', {}, m.label),
+      el('td', { class: 'num val-strong' }, fmtMetric(m.key, b[m.key]))))));
+  host.append(el('div', { class: 'table-wrap' }, table));
+
+  // ผลของรอบที่บันทึกนี้ปิด — ถ้ามีรอบก่อนหน้าให้เทียบ
+  const rnd = roundOf(rec);
+  const cmp = rnd ? roundCompare(rnd, 'auto') : null;
+  if (cmp) {
+    host.append(el('div', { class: 'section-label', style: 'margin-top:20px' }, 'เทียบกับรอบก่อนหน้า'));
+    host.append(el('div', { class: 'verdict-panel' },
+      el('div', { class: 'card-head', style: 'margin-bottom:12px' },
+        el('h3', {}, 'ผลรวมของรอบนี้'),
+        verdictBadge(cmp.verdict)),
+      deltaTiles(cmp)));
+    host.append(deltaTable(cmp));
+    if (rnd.adjustments?.length) {
+      host.append(el('div', { class: 'section-label', style: 'margin-top:18px' },
+        `การปรับในรอบนี้ ${rnd.adjustments.length} ครั้ง`));
+      host.append(el('div', { class: 'round-adjs' }, rnd.adjustments.map(a =>
+        el('div', { class: 'adj' }, el('b', {}, thaiDate(a.date)), ' ' + a.change_detail))));
+    }
+  } else {
+    host.append(el('p', { class: 'card-note', style: 'margin-top:16px' },
+      'ยังไม่มีตัวเลขครั้งก่อนของแคมเปญนี้ให้เทียบ — ตัวเลขชุดนี้เป็นค่าตั้งต้น'));
+  }
+
+  host.append(el('div', { class: 'btn-row' },
+    el('button', {
+      class: 'btn', onclick: () => { $('#viewModal').close(); Form.load(rec); showTab('new'); }
+    }, 'แก้ไขบันทึกนี้'),
+    el('button', {
+      class: 'btn btn-ghost', onclick: () => $('#viewModal').close()
+    }, 'ปิด')));
+
+  $('#viewModal').showModal();
+}
+
+/* ─────────────────────────────────────────────────────────────
+   10a-4. หน้า งบ & Bid ปัจจุบัน
+   ───────────────────────────────────────────────────────────── */
+
+/** ค่าล่าสุดที่กรอกไว้ของฟิลด์หนึ่ง พร้อมวันที่ที่ตั้งค่านั้น */
+function latestSetting(campaign, key) {
+  for (const r of Store.sorted()) {           // sorted() = ใหม่ก่อนเก่า
+    if (r.campaign !== campaign) continue;
+    const v = num(r[key]);
+    if (v !== null) return { value: v, date: r.date };
+  }
+  return null;
+}
+
+function budgetRows() {
+  const names = new Set(Store.records.map(r => r.campaign).filter(Boolean));
+  for (const c of Store.campaigns) if (c.name) names.add(c.name);
+
+  const out = [];
+  for (const name of names) {
+    const recs = Store.sorted().filter(r => r.campaign === name);
+    const measured = recs.find(r => isMeasured(r));
+    const cpc = measured ? num(solveBlock(block(measured, 'before')).values.cpc) : null;
+    out.push({
+      campaign: name,
+      product: recs.length ? recProduct(recs[0]) : (Store.campaign(name)?.product || ''),
+      group: recs.length ? recGroup(recs[0]) : '',
+      budget: latestSetting(name, 'budget'),
+      bid: latestSetting(name, 'bid'),
+      cpc,
+      lastTouch: recs[0]?.date || ''
+    });
+  }
+  return out.sort((a, b) => (b.lastTouch || '').localeCompare(a.lastTouch || ''));
+}
+
+function renderBudgetPage() {
+  const all = budgetRows();
+  const group = $('#budgetGroup').value;
+  const q = $('#budgetSearch').value.trim().toLowerCase();
+  const rows = all.filter(r =>
+    (!group || r.group === group) &&
+    (!q || r.campaign.toLowerCase().includes(q) || String(r.product).toLowerCase().includes(q)));
+
+  // การ์ดสรุปด้านบน
+  const withBudget = all.filter(r => r.budget);
+  const totalBudget = withBudget.reduce((s, r) => s + r.budget.value, 0);
+  const missing = all.filter(r => !r.budget || !r.bid).length;
+  const stats = $('#budgetStats');
+  stats.innerHTML = '';
+  const cards = [
+    { cls: 'c1', icon: 'edit', label: 'งบรวมต่อวัน', value: fmt(totalBudget, 0), unit: ' ฿',
+      sub: `จาก ${withBudget.length} แคมเปญที่บันทึกงบไว้` },
+    { cls: 'c3', icon: 'up', label: 'งบรวมต่อเดือน', value: fmt(totalBudget * 30.4, 0), unit: ' ฿',
+      sub: 'ประมาณจากงบต่อวัน × 30.4' },
+    { cls: 'c4', icon: 'clock', label: 'แคมเปญทั้งหมด', value: String(all.length), unit: '',
+      sub: 'ที่เคยมีบันทึก' },
+    { cls: 'c2', icon: 'down', label: 'ยังไม่ได้บันทึกค่า', value: String(missing), unit: '',
+      sub: missing ? 'แคมเปญที่ขาดงบหรือ bid' : 'บันทึกครบทุกแคมเปญ' }
+  ];
+  for (const c of cards) {
+    stats.append(el('div', { class: `stat-card ${c.cls}` },
+      el('div', { class: 'sc-body' },
+        el('div', { class: 'sc-label' }, c.label),
+        el('div', { class: 'sc-value' }, c.value, c.unit ? el('small', {}, c.unit) : null),
+        el('div', { class: 'sc-sub' }, c.sub)),
+      svgIcon(c.icon)));
+  }
+
+  const tbody = $('#budgetTable').querySelector('tbody');
+  tbody.innerHTML = '';
+  if (!rows.length) {
+    tbody.append(el('tr', {}, el('td', { colspan: '8' },
+      el('div', { class: 'empty' },
+        el('strong', {}, 'ยังไม่มีข้อมูลงบและ bid'),
+        'กรอกช่อง "งบต่อวัน" และ "Max CPC bid" ในหน้าบันทึกใหม่ตอนที่เปลี่ยนค่า แล้วหน้านี้จะดึงค่าล่าสุดมาแสดงให้เอง'))));
+    return;
+  }
+
+  const today = todayISO();
+  for (const r of rows) {
+    const oldest = [r.budget?.date, r.bid?.date].filter(Boolean).sort()[0];
+    const age = oldest ? daysBetween(oldest, today) : null;
+    const stale = age !== null && age > 30;
+    const overBid = r.bid && r.cpc !== null && r.cpc > r.bid.value * 1.05;
+
+    const cell = (setting, dec, unit) => setting
+      ? el('td', { class: 'num val-strong' }, fmt(setting.value, dec) + unit)
+      : el('td', { class: 'num val-none' }, '—');
+    const when = setting => setting
+      ? el('td', {}, el('span', { class: `stale${stale ? ' is-old' : ''}` },
+          `${thaiDate(setting.date)} · ${relativeDay(setting.date)}`))
+      : el('td', { class: 'val-none' }, 'ยังไม่เคยบันทึก');
+
+    tbody.append(el('tr', { class: stale ? 'row-warn' : '' },
+      el('td', {}, el('b', {}, r.campaign)),
+      el('td', {}, r.product || '—'),
+      cell(r.budget, 0, ' ฿'),
+      when(r.budget),
+      cell(r.bid, 2, ' ฿'),
+      when(r.bid),
+      r.cpc === null
+        ? el('td', { class: 'num val-none' }, '—')
+        : el('td', { class: 'num' + (overBid ? ' delta-down' : '') },
+            fmt(r.cpc, 2) + ' ฿',
+            overBid ? el('span', { title: 'CPC จริงสูงกว่า Max CPC ที่ตั้งไว้' }, ' ⚠') : null),
+      el('td', {},
+        el('button', {
+          class: 'btn btn-sm', onclick: () => openBudgetEdit(r)
+        }, 'อัปเดตค่า'))));
+  }
+}
+
+/** แก้งบ/bid เร็วๆ จากหน้านี้ — สร้างเป็นบันทึกใหม่ เพื่อให้รู้ว่าเปลี่ยนวันไหน */
+function openBudgetEdit(row) {
+  Form.reset();
+  $('#f_campaign').value = row.campaign;
+  Form.onCampaignInput();
+  Form.refreshBaseline();
+  $('#f_budget').value = row.budget ? row.budget.value : '';
+  $('#f_bid').value = row.bid ? row.bid.value : '';
+  $('#f_change_detail').value = 'ปรับงบ / bid';
+  Form.selectedTags = new Set(['ปรับงบประมาณ']);
+  $$('#tagChips .chip').forEach(c =>
+    c.setAttribute('aria-pressed', String(Form.selectedTags.has(c.dataset.tag))));
+  showTab('new');
+  setTimeout(() => $('#f_budget')?.focus(), 200);
+}
+
+function initBudgetPage() {
+  $('#budgetGroup').addEventListener('change', renderBudgetPage);
+  $('#budgetSearch').addEventListener('input', renderBudgetPage);
+  $('#budgetCopy').addEventListener('click', () => {
+    const rows = budgetRows();
+    const lines = ['แคมเปญ\tสินค้า\tงบ/วัน\tMax CPC\tตั้งเมื่อ'];
+    for (const r of rows) {
+      lines.push([
+        r.campaign, r.product || '',
+        r.budget ? r.budget.value : '',
+        r.bid ? r.bid.value : '',
+        r.budget?.date || r.bid?.date || ''
+      ].join('\t'));
+    }
+    navigator.clipboard.writeText(lines.join('\n'))
+      .then(() => toast('คัดลอกตารางแล้ว วางในชีตได้เลย'))
+      .catch(() => toast('คัดลอกไม่สำเร็จ'));
+  });
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -3339,6 +3801,7 @@ function syncCampaignSelects() {
   }
 
   if ($('#prodGroupFilter')) fillSelect($('#prodGroupFilter'), Taxonomy.groups(), 'ทุกกลุ่ม');
+  if ($('#budgetGroup')) fillSelect($('#budgetGroup'), Taxonomy.groups(), 'ทุกกลุ่ม');
 }
 
 function updateConnBadge() {
@@ -3415,11 +3878,40 @@ function refreshAll() {
   if (!$('#panel-timeline').hidden) renderTimeline();
   if (!$('#panel-dashboard').hidden) renderDashboard();
   if (!$('#panel-trend').hidden) renderTrend();
+  if (!$('#panel-budget').hidden) renderBudgetPage();
 }
 
-function initShortcuts() {
+/** ลูกศรขึ้น/ลงเลื่อนเมนูซ้าย — พฤติกรรมมาตรฐานของ role="tablist" */
+function initTablistKeys() {
+  const tabs = PANELS.map(p => $(`#tab-${p}`));
+  for (const [i, tab] of tabs.entries()) {
+    tab.addEventListener('keydown', e => {
+      const map = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 };
+      let next = null;
+      if (map[e.key]) next = (i + map[e.key] + tabs.length) % tabs.length;
+      else if (e.key === 'Home') next = 0;
+      else if (e.key === 'End') next = tabs.length - 1;
+      if (next === null) return;
+      e.preventDefault();
+      showTab(PANELS[next]);
+      tabs[next].focus();
+    });
+  }
+}
+
+function initHelp() {
+  const dlg = $('#helpModal');
+  const open = () => { if (!dlg.open) dlg.showModal(); };
+  $('#helpBtn').addEventListener('click', open);
+  $('#helpClose').addEventListener('click', () => dlg.close());
+  dlg.addEventListener('click', e => { if (e.target === dlg) dlg.close(); });
+  return { open, toggle: () => (dlg.open ? dlg.close() : dlg.showModal()) };
+}
+
+function initShortcuts(help) {
   document.addEventListener('keydown', e => {
-    const inField = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName);
+    const inField = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)
+      || e.target.isContentEditable;
 
     // Ctrl/Cmd + Enter = บันทึก (ใช้ได้แม้เคอร์เซอร์อยู่ในช่องข้อความ)
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && !$('#panel-new').hidden) {
@@ -3436,8 +3928,19 @@ function initShortcuts() {
       setTimeout(() => $('#flt_q').focus(), 60);
       return;
     }
-    // 1-5 = สลับแท็บ
-    const idx = ['1', '2', '3', '4', '5'].indexOf(e.key);
+    // ? = คู่มือปุ่มลัด
+    if (e.key === '?') { e.preventDefault(); help.toggle(); return; }
+    // n = บันทึกใหม่ · t = สรุปวันนี้
+    if (e.key === 'n' || e.key === 'N') {
+      e.preventDefault(); Form.reset(); showTab('new');
+      setTimeout(() => $('#f_campaign')?.focus(), 80);
+      return;
+    }
+    if (e.key === 't' || e.key === 'T') {
+      e.preventDefault(); $('#dailyDate').value = todayISO(); showTab('dashboard'); return;
+    }
+    // 1-6 = สลับแท็บ
+    const idx = ['1', '2', '3', '4', '5', '6'].indexOf(e.key);
     if (idx >= 0) { e.preventDefault(); showTab(PANELS[idx]); }
   });
 }
@@ -3469,8 +3972,10 @@ async function boot() {
   initImport();
   initSettings();
   initDailyCard();
+  initBudgetPage();
   initSidebar();
-  initShortcuts();
+  initTablistKeys();
+  initShortcuts(initHelp());
 
   // modal วางตัวเลข
   $('#pasteText').addEventListener('input', previewPaste);
@@ -3478,11 +3983,18 @@ async function boot() {
   $('#pasteCancel').addEventListener('click', () => { $('#pasteModal').close(); pasteTarget = null; });
 
   $('#refreshBtn').addEventListener('click', async () => {
-    $('#refreshBtn').disabled = true;
-    await Store.sync();
-    refreshAll();
-    $('#refreshBtn').disabled = false;
-    toast('โหลดข้อมูลใหม่แล้ว');
+    const btn = $('#refreshBtn');
+    btn.disabled = true;
+    btn.classList.add('is-spinning');
+    try {
+      await Store.sync();
+      Form.renderRecentChips();
+      refreshAll();
+      toast('โหลดข้อมูลใหม่แล้ว');
+    } finally {
+      btn.disabled = false;
+      btn.classList.remove('is-spinning');
+    }
   });
 
   $('#dashMode').addEventListener('change', renderDashboard);

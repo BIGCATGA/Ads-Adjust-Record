@@ -218,6 +218,16 @@ a  { color: var(--accent); text-decoration-color: var(--accent-ring); text-under
   box-shadow: 0 6px 18px -8px var(--accent);
 }
 .nav-item[aria-selected="true"] svg { opacity: 1; }
+/* เลขปุ่มลัดข้างเมนู — ช่วยให้จำได้เองโดยไม่ต้องเปิดคู่มือ */
+.nav-key {
+  margin-left: auto; font-family: var(--font);
+  font-size: 0.66rem; font-weight: 400; line-height: 1.5;
+  color: inherit; opacity: 0.4;
+  background: none; border: 1px solid currentColor; border-radius: 4px;
+  padding: 0 5px;
+}
+.nav-item[aria-selected="true"] .nav-key { opacity: 0.65; }
+@media (pointer: coarse) { .nav-key { display: none; } }
 
 .sidebar-foot {
   padding: 14px 16px 18px; border-top: 1px solid var(--sidebar-line);
@@ -286,6 +296,12 @@ a  { color: var(--accent); text-decoration-color: var(--accent-ring); text-under
 }
 .icon-btn:hover { background: var(--surface-2); color: var(--text-primary); }
 .icon-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.icon-btn svg {
+  width: 17px; height: 17px;
+  fill: none; stroke: currentColor; stroke-width: 1.8;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+.icon-btn.is-spinning svg { animation: spin 0.7s linear infinite; }
 
 main { max-width: 1320px; margin: 0 auto; padding: 24px 26px 96px; }
 
@@ -864,6 +880,146 @@ code, kbd {
   clip: rect(0 0 0 0); white-space: nowrap;
 }
 
+/* ── โฟกัสคีย์บอร์ด: ต้องเห็นชัดทุกปุ่ม ไม่ใช่แค่ .btn ────── */
+
+:where(a, button, summary, [tabindex]):focus-visible,
+.chip:focus-visible, .icon-btn:focus-visible, .nav-item:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-ring);
+  border-radius: var(--r-sm);
+  position: relative; z-index: 5;
+}
+.chip:focus-visible { border-radius: 999px; }
+.sidebar :focus-visible { box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.55); }
+
+/* พื้นที่กดบนจอสัมผัสต้องไม่ต่ำกว่า 44px แม้ปุ่มจะดูเล็ก */
+@media (pointer: coarse) {
+  .icon-btn, .chip, .btn-sm {
+    position: relative;
+  }
+  .icon-btn::after, .chip::after, .btn-sm::after {
+    content: ''; position: absolute; left: 50%; top: 50%;
+    transform: translate(-50%, -50%);
+    width: max(100%, 44px); height: max(100%, 44px);
+  }
+}
+
+/* ── ปุ่มลัด (dialog) ───────────────────────────────────── */
+
+dialog.modal-sm { max-width: 520px; }
+table.keys { width: 100%; border-collapse: collapse; margin-top: 14px; }
+table.keys td {
+  padding: 8px 0; vertical-align: top;
+  font-size: 0.84rem; font-weight: 300; color: var(--text-secondary);
+  border-bottom: 1px solid var(--gridline);
+}
+table.keys tr:last-child td { border-bottom: 0; }
+table.keys td:first-child { width: 38%; white-space: nowrap; padding-right: 14px; }
+kbd {
+  font-family: var(--font); font-size: 0.74rem; font-weight: 500;
+  color: var(--text-primary);
+  background: var(--surface-2); border: 1px solid var(--border-strong);
+  border-bottom-width: 2px; border-radius: 5px;
+  padding: 1px 6px; display: inline-block; line-height: 1.5;
+}
+
+/* ── แคมเปญที่ใช้บ่อย — กดแทนการพิมพ์ ──────────────────── */
+
+.quickpick {
+  display: flex; align-items: center; gap: 10px;
+  flex-wrap: wrap; margin-bottom: 14px;
+  padding-bottom: 14px; border-bottom: 1px dashed var(--border-strong);
+}
+.quickpick-label {
+  font-size: 0.72rem; font-weight: 400; color: var(--text-muted);
+  letter-spacing: 0.04em; text-transform: uppercase; flex: none;
+}
+.chip.chip-campaign {
+  max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.chip.chip-campaign small {
+  color: var(--text-muted); font-size: 0.9em; margin-left: 5px; font-weight: 300;
+}
+.chip[aria-pressed="true"] small { color: rgba(255, 255, 255, 0.75); }
+
+/* ── ตัวกรองพับได้ (จำเป็นเฉพาะจอเล็ก) ─────────────────── */
+
+.filter-wrap { margin-bottom: 18px; }
+.filter-wrap > summary { display: none; }
+/* บนจอใหญ่ตัวกรองต้องเห็นตลอด ไม่ว่า details จะเปิดหรือปิด */
+.filter-wrap:not([open]) > .filterbar { display: flex; }
+.filter-wrap > .filterbar { margin-bottom: 0; }
+.filter-summary {
+  align-items: center; gap: 8px; cursor: pointer;
+  padding: 10px 14px; border-radius: var(--r-md);
+  border: 1px solid var(--border); background: var(--surface-1);
+  font-size: 0.84rem; color: var(--text-secondary);
+  list-style: none; margin-bottom: 12px;
+}
+.filter-summary::-webkit-details-marker { display: none; }
+.filter-summary svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linejoin: round; flex: none; }
+.filter-badge {
+  margin-left: auto; font-size: 0.72rem; font-weight: 500;
+  background: var(--accent); color: #fff;
+  border-radius: 999px; padding: 1px 9px;
+}
+
+/* ── สถานะกำลังโหลดครั้งแรก ─────────────────────────────── */
+
+.skeleton {
+  border-radius: var(--r-sm);
+  background: linear-gradient(90deg, var(--surface-2) 25%, var(--surface-3) 50%, var(--surface-2) 75%);
+  background-size: 400% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+@keyframes shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
+.skeleton-row { display: flex; flex-direction: column; gap: 10px; padding: 4px 0; }
+.skeleton-line { height: 13px; }
+
+/* ── ป๊อปอัพ: ปุ่มปิดมุมขวาบน ───────────────────────────── */
+
+.modal-x {
+  position: absolute; top: 12px; right: 12px; z-index: 2; margin: 0;
+}
+dialog.modal { position: fixed; }
+dialog.modal .modal-body { position: relative; }
+dialog.modal .modal-body > h2 { padding-right: 44px; }
+
+/* ── หน้า งบ & Bid ──────────────────────────────────────── */
+
+.field.grow-sm { flex: 1 1 180px; min-width: 140px; }
+table.data th.num, table.data td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.val-strong { font-weight: 500; color: var(--text-primary); }
+.val-none { color: var(--text-muted); font-weight: 300; }
+.stale {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 0.76rem; color: var(--text-muted); font-weight: 300;
+}
+.stale.is-old { color: var(--warning); }
+tr.row-warn td { background: var(--warning-wash); }
+
+/* ค่าก่อนหน้าที่โผล่ใต้ช่องงบ/bid ให้รู้ว่าเดิมตั้งไว้เท่าไหร่ */
+.field-prev {
+  font-size: 0.74rem; color: var(--text-muted); font-weight: 300;
+  margin-top: 4px; min-height: 1em;
+}
+.field-prev button {
+  appearance: none; border: 0; background: none; font: inherit;
+  font-size: inherit; color: var(--accent); cursor: pointer;
+  padding: 0 2px; text-decoration: underline; text-underline-offset: 2px;
+}
+
+/* ── ปุ่มบันทึกตอนกำลังทำงาน ────────────────────────────── */
+
+.btn.is-busy { pointer-events: none; }
+.btn.is-busy::before {
+  content: ''; width: 14px; height: 14px; flex: none;
+  border-radius: 50%;
+  border: 2px solid currentColor; border-top-color: transparent;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
 @media (max-width: 1020px) {
   .sidebar {
     transform: translateX(-100%);
@@ -892,6 +1048,16 @@ code, kbd {
   .field.w-sm, .field.w-md { flex: 1 1 140px; }
   .daynav { width: 100%; }
   .daynav input[type="date"] { flex: 1; }
+
+  /* ตัวกรอง 7 ช่องกินพื้นที่ทั้งจอ — พับเก็บให้เห็นไทม์ไลน์ก่อน */
+  .filter-wrap > summary { display: flex; }
+  .filter-wrap:not([open]) > .filterbar { display: none; }
+
+  /* ปุ่มบันทึกต้องกดถึงง่ายด้วยนิ้วโป้ง */
+  .action-bar { padding: 10px 12px; bottom: 0; }
+  .action-bar .btn { flex: 1 1 auto; min-height: 44px; }
+  .action-bar .btn-ghost { flex: 0 0 auto; }
+  .quickpick-label { flex-basis: 100%; }
 }
 
 @media print {
