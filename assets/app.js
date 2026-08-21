@@ -1323,11 +1323,14 @@ function toggleCalcFields(side) {
   if (link) link.textContent = fields.hidden ? 'แก้เอง' : 'ซ่อนช่องคำนวณ';
 }
 
-/** ล้างสถานะ "ค่าที่ระบบเติม" ทั้งฝั่ง (ใช้ตอนโหลดข้อมูลเข้าฟอร์ม) */
+/** ล้างสถานะ "ค่าที่ระบบเติม" ทั้งฝั่ง (ใช้ตอนโหลดข้อมูลเข้าฟอร์ม)
+ *  ต้องล้างค่าในช่องที่ระบบเติมไว้ด้วย ไม่งั้นรอบถัดไปจะนับเป็นค่าที่ผู้ใช้กรอกเอง
+ *  แล้วไม่ยอมคำนวณใหม่ */
 function clearAutoFlags(side) {
   for (const m of METRICS) {
     const input = $(`#${side}_${m.key}`);
     if (!input) continue;
+    if (input.dataset.auto === '1') input.value = '';
     delete input.dataset.auto;
     input.classList.remove('is-auto');
     const badge = $(`#badge_${side}_${m.key}`);
@@ -1812,6 +1815,7 @@ function renderDashboard() {
     }
   }
 
+  renderStatCards();
   renderDaily();
   renderProductComparison();
 
@@ -1840,6 +1844,116 @@ function renderDashboard() {
     tr.addEventListener('click', () => { $('#dashRecord').value = r.id; renderDashboard(); window.scrollTo({ top: 0, behavior: 'smooth' }); });
     tb.append(tr);
   }
+}
+
+/* ─────────────────────────────────────────────────────────────
+   9b. แถบทักทาย + การ์ดสถิติสี
+   ───────────────────────────────────────────────────────────── */
+
+const STAT_ICONS = {
+  edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
+  up:   '<path d="M23 6l-9.5 9.5-5-5L1 18"/><path d="M17 6h6v6"/>',
+  down: '<path d="M23 18l-9.5-9.5-5 5L1 6"/><path d="M17 18h6v-6"/>',
+  clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/>'
+};
+
+function svgIcon(name) {
+  const span = el('span', { class: 'sc-icon' });
+  span.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${STAT_ICONS[name] || ''}</svg>`;
+  return span;
+}
+
+function updateGreeting() {
+  const h = new Date().getHours();
+  const part = h < 12 ? 'สวัสดีตอนเช้า' : h < 17 ? 'สวัสดีตอนบ่าย' : 'สวัสดีตอนเย็น';
+  $('#greetTitle').textContent = part;
+
+  const today = Store.records.filter(r => String(r.date || '') === todayISO()).length;
+  const pending = Store.records.filter(r => !recCompare(r)).length;
+  const bits = [];
+  bits.push(today ? `วันนี้บันทึกไปแล้ว ${today} รายการ` : 'วันนี้ยังไม่ได้บันทึกอะไร');
+  if (pending) bits.push(`มี ${pending} การปรับที่ยังรอผล`);
+  $('#greetSub').textContent = bits.join(' · ');
+}
+
+/** เดือนนี้เทียบเดือนก่อน — ใช้บอก % ใต้ตัวเลขในการ์ด */
+function monthBuckets() {
+  const now = new Date(todayISO());
+  const thisKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const prevDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const prevKey = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}`;
+  const pick = key => Store.records.filter(r => String(r.date || '').startsWith(key));
+  return { now: pick(thisKey), prev: pick(prevKey) };
+}
+
+function renderStatCards() {
+  const host = $('#statRow');
+  if (!host) return;
+  host.innerHTML = '';
+
+  const { now, prev } = monthBuckets();
+  const judged = list => list.map(r => recCompare(r)).filter(Boolean);
+  const count = (list, verdict) => judged(list).filter(c => c.verdict === verdict).length;
+
+  const pct = (a, b) => {
+    if (!b) return a ? null : 0;
+    return (a - b) / b * 100;
+  };
+  const subOf = (a, b) => {
+    const d = pct(a, b);
+    if (d === null) return 'เดือนก่อนยังไม่มีข้อมูล';
+    if (Math.abs(d) < 0.5) return 'เท่าเดือนก่อน';
+    return `${d > 0 ? '▲' : '▼'} ${fmt(Math.abs(d), 1)}% จากเดือนก่อน`;
+  };
+
+  const nowUp = count(now, 'up'), nowDown = count(now, 'down');
+  const nowJudged = judged(now).length;
+  const pendingNow = now.length - nowJudged;
+
+  const cards = [
+    { cls: 'c1', icon: 'edit',  label: 'การปรับเดือนนี้', value: now.length,
+      sub: subOf(now.length, prev.length) },
+    { cls: 'c4', icon: 'up',    label: 'ได้ผล ดีขึ้น', value: nowUp,
+      sub: nowJudged ? `${Math.round(nowUp / nowJudged * 100)}% ของที่รู้ผลแล้ว` : 'ยังไม่มีที่รู้ผล' },
+    { cls: 'c2', icon: 'down',  label: 'แย่ลง', value: nowDown,
+      sub: nowJudged ? `${Math.round(nowDown / nowJudged * 100)}% ของที่รู้ผลแล้ว` : 'ยังไม่มีที่รู้ผล' },
+    { cls: 'c3', icon: 'clock', label: 'รอผล', value: pendingNow,
+      sub: pendingNow ? 'ยังไม่มีตัวเลขรอบถัดไป' : 'รู้ผลครบแล้ว' }
+  ];
+
+  for (const c of cards) {
+    host.append(el('div', { class: `stat-card ${c.cls}` },
+      el('div', { class: 'sc-body' },
+        el('div', { class: 'sc-label' }, c.label),
+        el('div', { class: 'sc-value' }, String(c.value), el('small', {}, ' รายการ')),
+        el('div', { class: 'sc-sub' }, c.sub)),
+      svgIcon(c.icon)));
+  }
+}
+
+/** เมนูซ้ายบนจอเล็ก */
+function initSidebar() {
+  const close = () => {
+    document.body.classList.remove('nav-open');
+    $('#navScrim').hidden = true;
+  };
+  const open = () => {
+    document.body.classList.add('nav-open');
+    $('#navScrim').hidden = false;
+  };
+  $('#navToggle').addEventListener('click', () =>
+    document.body.classList.contains('nav-open') ? close() : open());
+  $('#navScrim').addEventListener('click', close);
+  for (const p of PANELS) $(`#tab-${p}`).addEventListener('click', close);
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && document.body.classList.contains('nav-open')) close();
+  });
+
+  $('#quickNew').addEventListener('click', () => { Form.reset(); showTab('new'); });
+  $('#quickToday').addEventListener('click', () => {
+    $('#dailyDate').value = todayISO();
+    showTab('dashboard');
+  });
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -3119,6 +3233,7 @@ function updateConnBadge() {
 
 function refreshAll() {
   updateConnBadge();
+  updateGreeting();
   Form.buildTaxonomySelects();
   Form.refreshCampaignList();
   syncCampaignSelects();
@@ -3180,6 +3295,7 @@ async function boot() {
   initImport();
   initSettings();
   initDailyCard();
+  initSidebar();
   initShortcuts();
 
   // modal วางตัวเลข
@@ -3206,13 +3322,21 @@ async function boot() {
     if ($('#afterModal').returnValue === 'save') commitAfterModal();
   });
 
-  await Store.sync();
+  // เปิดหน้าให้ใช้งานได้ทันทีจากข้อมูลที่แคชไว้ ไม่ต้องรอ Google ตอบ
+  // (ครั้งแรกของวัน Apps Script อาจ cold start หลายวินาที)
   Form.refreshCampaignList();
   Form.reset();
   refreshAll();
 
   const hash = location.hash.replace('#', '');
   showTab(PANELS.includes(hash) ? hash : 'new');
+
+  // ดึงข้อมูลจริงตามมาทีหลัง — อัปเดตรายการโดยไม่ล้างสิ่งที่ผู้ใช้กำลังพิมพ์อยู่
+  await Store.sync();
+  Form.refreshCampaignList();
+  Form.buildTaxonomySelects();
+  Form.refreshBaseline();
+  refreshAll();
 }
 
 document.addEventListener('DOMContentLoaded', boot);
