@@ -480,6 +480,34 @@ details.more > .more-body { margin-top: 14px; }
 .verdict-panel h3 { font-size: 0.9rem; margin-right: auto; }
 .verdict-panel .tile { background: var(--surface-1); }
 
+/* กล่องตัวเลขที่พับได้ */
+.numbers-box > summary {
+  font-size: 0.86rem; font-weight: 500;
+  padding: 9px 16px; color: var(--accent);
+  border-color: var(--accent-ring); background: var(--accent-soft);
+}
+.numbers-box > summary:hover { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.numbers-box > summary::before { color: var(--accent); }
+.numbers-box[open] > summary { background: var(--surface-2); color: var(--text-primary); border-color: var(--border-strong); }
+.numbers-box[open] > summary::before { color: var(--text-muted); }
+
+/* รอบวัดผล */
+.round { border: 1px solid var(--border); border-radius: var(--r-md); padding: 14px 16px; margin-bottom: 10px; }
+.round-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.round-head .r-title { font-weight: 500; font-size: 0.88rem; }
+.round-head .r-meta { font-size: 0.76rem; color: var(--text-muted); font-weight: 300; }
+.round-adjs { display: flex; flex-direction: column; gap: 5px; margin-top: 8px; }
+.round-adjs .adj {
+  font-size: 0.81rem; color: var(--text-secondary); font-weight: 300;
+  padding-left: 14px; position: relative; line-height: 1.55;
+}
+.round-adjs .adj::before {
+  content: ''; position: absolute; left: 3px; top: 0.62em;
+  width: 5px; height: 5px; border-radius: 50%; background: var(--baseline);
+}
+.round-adjs .adj b { color: var(--text-primary); font-weight: 500; }
+.round.is-open { border-style: dashed; }
+
 /* ── Buttons ────────────────────────────────────────────── */
 
 .btn {

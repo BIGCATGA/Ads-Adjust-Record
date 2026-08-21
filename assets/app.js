@@ -429,6 +429,7 @@ const Store = {
   config: { url: '', token: '' },
   records: [],
   campaigns: [],
+  rev: 0,                 // เพิ่มทุกครั้งที่ข้อมูลเปลี่ยน ใช้ล้างแคชรอบวัดผล
   online: false,
   status: 'local',        // local | connecting | online | error
   lastError: '',
@@ -485,6 +486,7 @@ const Store = {
     try {
       const raw = JSON.parse(localStorage.getItem(LS_CACHE) || '{}');
       this.records = Array.isArray(raw.records) ? raw.records : [];
+      this.rev++;
       this.campaigns = Array.isArray(raw.campaigns) ? raw.campaigns : [];
       if (Array.isArray(raw.products) && raw.products.length) Taxonomy.set(raw.products);
     } catch {
@@ -605,6 +607,7 @@ const Store = {
       if (Array.isArray(data.products) && data.products.length) Taxonomy.set(data.products);
       this.campaigns = data.campaigns || [];
       this.records = (data.records || []).map(normalizeRecord);
+      this.rev++;
       this.online = true;
       this.status = 'online';
       this.lastError = '';
@@ -631,6 +634,7 @@ const Store = {
     if (this.online) await this.call('create', { record: rec });
     this.records.push(rec);
     this.touchCampaign(rec);
+    this.rev++;
     this.saveCache();
     return rec;
   },
@@ -642,6 +646,7 @@ const Store = {
     if (i >= 0) this.records[i] = { ...this.records[i], ...rec };
     else this.records.push(rec);
     this.touchCampaign(rec);
+    this.rev++;
     this.saveCache();
     return rec;
   },
@@ -649,6 +654,7 @@ const Store = {
   async remove(id) {
     if (this.online) await this.call('delete', { id });
     this.records = this.records.filter(r => r.id !== id);
+    this.rev++;
     this.saveCache();
   },
 
@@ -661,6 +667,7 @@ const Store = {
     });
     if (this.online) await this.call('bulkCreate', { records: list });
     this.records.push(...list);
+    this.rev++;
     this.saveCache();
     return list.length;
   },
@@ -692,6 +699,25 @@ const Store = {
     return this.sorted().find(r =>
       r.campaign === campaign &&
       r.id !== excludeId &&
+      (!beforeDate || String(r.date || '') <= String(beforeDate)));
+  },
+
+  /** จุดวัดผลล่าสุด — ข้ามบันทึกที่ไม่มีตัวเลข ไม่ว่าจะห่างกี่วัน */
+  latestMeasured(campaign, beforeDate, excludeId) {
+    return this.sorted().find(r =>
+      r.campaign === campaign &&
+      r.id !== excludeId &&
+      isMeasured(r) &&
+      (!beforeDate || String(r.date || '') <= String(beforeDate)));
+  },
+
+  /** บันทึกการปรับที่เกิดหลังจุดวัดผลล่าสุด (ยังไม่ได้วัด) */
+  adjustmentsSince(campaign, sinceDate, beforeDate, excludeId) {
+    return this.sorted().filter(r =>
+      r.campaign === campaign &&
+      r.id !== excludeId &&
+      hasAdjustment(r) &&
+      String(r.date || '') >= String(sinceDate || '') &&
       (!beforeDate || String(r.date || '') <= String(beforeDate)));
   },
 
@@ -881,29 +907,32 @@ const Form = {
     this.baseline = null;
 
     if (campaign) {
-      const prev = Store.latestFor(campaign, $('#f_date').value, this.editingId);
+      // ข้ามบันทึกที่ไม่มีตัวเลขไปหาจุดวัดผลจริง ไม่ว่าจะห่างกี่วัน
+      const prev = Store.latestMeasured(campaign, $('#f_date').value, this.editingId);
       if (prev) {
-        const prevAfter = block(prev, 'after');
-        const prevBefore = block(prev, 'before');
-        // ถ้าบันทึกก่อนหน้ายังไม่มี "ผลหลังปรับ" แปลว่าตัวเลขที่เรากำลังกรอกคือผลของการปรับครั้งนั้น
-        const usingBefore = !hasNumbers(prevAfter);
-        const src = usingBefore ? prevBefore : prevAfter;
-        if (hasNumbers(src)) {
-          this.baseline = {
-            record: prev,
-            block: src,
-            judgesPrevAdjustment: usingBefore,
-            label: usingBefore
-              ? `ผลของการปรับเมื่อ ${thaiDate(prev.date)}`
-              : `เทียบกับตัวเลขล่าสุด (${thaiDate(prev.date)})`
-          };
-        }
+        const since = Store.adjustmentsSince(campaign, prev.date, $('#f_date').value, this.editingId);
+        this.baseline = {
+          record: prev,
+          block: block(prev, 'before'),
+          adjustments: since,
+          label: since.length > 1
+            ? `ผลรวมของการปรับ ${since.length} ครั้งในรอบนี้`
+            : 'ผลของการปรับในรอบนี้'
+        };
       }
     }
 
     this.fillDefaultDates();
     this.renderBaselineStrip();
     this.updateComparison();
+
+    const sum = $('#numbersSummary');
+    if (sum) {
+      const n = this.baseline?.adjustments?.length || 0;
+      sum.textContent = n
+        ? `ใส่ตัวเลขวัดผล — ปิดรอบที่ปรับไปแล้ว ${n} ครั้ง`
+        : 'ใส่ตัวเลขวัดผลรอบนี้';
+    }
   },
 
   /** ช่วงวันที่: เริ่ม = วันที่บันทึกครั้งก่อน · สิ้นสุด = วันที่ปรับครั้งนี้ */
@@ -940,7 +969,7 @@ const Form = {
     const prev = this.baseline.record;
     const strip = el('div', { class: 'baseline-strip' },
       el('span', { class: 'bl-head' },
-        el('b', {}, 'ครั้งก่อน'), ' ', thaiDate(prev.date)));
+        el('b', {}, 'วัดผลล่าสุด'), ' ', thaiDate(prev.date)));
 
     for (const key of ['impressions', 'ctr', 'cpc', 'conversions', 'cpa']) {
       if (b[key] === null) continue;
@@ -955,9 +984,14 @@ const Form = {
       onclick: () => this.copyBaselineIntoFields()
     }, 'คัดลอกมาแก้'));
 
-    if ((prev.change_detail || '').trim()) {
+    const since = this.baseline.adjustments || [];
+    if (since.length) {
       strip.append(el('div', { class: 'bl-detail' },
-        'ครั้งนั้นปรับ: ' + String(prev.change_detail).replace(/\s+/g, ' ').slice(0, 120)));
+        el('b', {}, `ตั้งแต่นั้นปรับไปแล้ว ${since.length} ครั้ง: `),
+        since.slice(0, 4).map(r => String(r.change_detail).replace(/\s+/g, ' ').slice(0, 40)).join(' · ') +
+        (since.length > 4 ? ` · +อีก ${since.length - 4}` : '')));
+    } else {
+      strip.append(el('div', { class: 'bl-detail' }, 'ยังไม่มีการปรับหลังจากวัดผลครั้งนั้น'));
     }
     host.append(strip);
   },
@@ -1002,10 +1036,14 @@ const Form = {
 
     const host = $('#livePreview');
     host.innerHTML = '';
+    const since = this.baseline.adjustments || [];
     host.append(el('div', { class: 'verdict-panel' },
       el('div', { class: 'card-head', style: 'margin-bottom:12px' },
         el('h3', {}, this.baseline.label),
         verdictBadge(cmp.verdict)),
+      since.length > 1 ? el('p', { class: 'card-note', style: 'margin-bottom:12px' },
+        `รอบนี้มีการปรับ ${since.length} ครั้ง — ตัวเลขที่เปลี่ยนคือผลรวมของทั้งหมด ` +
+        'แยกไม่ได้ว่าครั้งไหนทำให้ดีขึ้น') : null,
       cmp.perDay ? el('p', { class: 'card-note', style: 'margin-bottom:12px' },
         `ช่วงก่อน ${cmp.bDays} วัน · ช่วงนี้ ${cmp.aDays} วัน — ตัวเลขสะสมถูกแปลงเป็นค่าเฉลี่ยต่อวันก่อนเทียบ`) : null,
       deltaTiles(cmp)));
@@ -1047,6 +1085,10 @@ const Form = {
       }
       this.onMetricInput(side);
     }
+    // เปิดกล่องตัวเลขเฉพาะตอนแก้บันทึกที่มีตัวเลขอยู่แล้ว
+    const box = $('#numbersBox');
+    if (box) box.open = !!(rec && isMeasured(rec));
+
     // กล่อง "ตัวเลขหลังปรับ" โผล่เฉพาะบันทึกที่มีตัวเลขชุดนั้นอยู่แล้ว
     const afterCard = $('#afterCard');
     if (afterCard) {
@@ -1070,6 +1112,7 @@ const Form = {
       this.onMetricInput(side);
     }
     if ($('#afterCard')) $('#afterCard').hidden = true;
+    if ($('#numbersBox')) $('#numbersBox').open = false;
     $('#f_product').value = '';
     $('#f_campaign').value = '';
     this.productTouched = false;
@@ -1643,6 +1686,7 @@ function renderTimeline() {
       el('span', { class: 'rec-campaign' }, rec.campaign || '—'),
       rec.ad_group ? el('span', { class: 'rec-campaign' }, rec.ad_group) : null,
       cmp ? verdictBadge(cmp.verdict) : verdictBadge('pending'),
+      isMeasured(rec) ? el('span', { class: 'tag' }, '📊 มีตัวเลข') : null,
       el('span', { class: 'rec-ago' }, relativeDay(rec.date))));
 
     if (rec.change_detail) card.append(el('div', { class: 'rec-body' }, rec.change_detail));
@@ -1657,6 +1701,14 @@ function renderTimeline() {
     if (rec.reason) card.append(el('div', { class: 'rec-meta', html: '<b>เหตุผล:</b> ' + esc(rec.reason) }));
     if (rec.expected) card.append(el('div', { class: 'rec-meta', html: '<b>คาดหวัง:</b> ' + esc(rec.expected) }));
     if (rec.result_note) card.append(el('div', { class: 'rec-meta', html: '<b>ผลจริง:</b> ' + esc(rec.result_note) }));
+
+    const round = roundOf(rec);
+    if (round && !round.orphan) {
+      const n = round.adjustments.length;
+      card.append(el('div', { class: 'rec-meta' },
+        el('b', {}, roundLabel(round)),
+        n > 1 ? ` · ผลรวมของการปรับ ${n} ครั้งในรอบนี้` : ''));
+    }
 
     if (cmp) {
       const key = cmp.rows.filter(r => ['cpa', 'conversions', 'cvr', 'ctr'].includes(r.key) && r.deltaPct !== null);
@@ -1689,19 +1741,93 @@ function renderTimeline() {
   }
 }
 
-/** เทียบก่อน/หลังของบันทึกหนึ่ง — ถ้าไม่มี after ในตัวเอง ลองใช้ before ของบันทึกถัดไป */
-function recCompare(rec, mode = 'auto') {
-  const b = block(rec, 'before');
-  let a = block(rec, 'after');
-  if (!hasNumbers(a)) {
-    const next = Store.nextFor(rec);
-    if (next) {
-      const nb = block(next, 'before');
-      if (hasNumbers(nb)) a = nb;
+/* ─────────────────────────────────────────────────────────────
+   8b. รอบวัดผล (measurement round)
+
+   ปรับทุกวันแต่วัดผลเป็นครั้ง ๆ — ระบบจึงจับ "ช่วงระหว่างการวัดผลสองครั้ง"
+   เป็นหนึ่งรอบ แล้วยกผลของรอบนั้นให้การปรับทุกครั้งที่เกิดในรอบร่วมกัน
+   (แยกไม่ได้ว่าครั้งไหนทำ — พูดตรง ๆ ดีกว่าเดาให้ผิด)
+   ───────────────────────────────────────────────────────────── */
+
+/** บันทึกที่ "มีตัวเลข" = จุดวัดผล */
+function isMeasured(rec) {
+  return hasNumbers(block(rec, 'before'));
+}
+function hasAdjustment(rec) {
+  return !!String(rec.change_detail || '').trim();
+}
+
+let _roundIndex = null, _roundRev = -1;
+
+function roundIndex() {
+  if (_roundIndex && _roundRev === Store.rev) return _roundIndex;
+  const byCampaign = new Map();
+  for (const rec of Store.records) {
+    const c = rec.campaign || '(ไม่ระบุ)';
+    if (!byCampaign.has(c)) byCampaign.set(c, []);
+    byCampaign.get(c).push(rec);
+  }
+
+  const rounds = [];
+  const ofRecord = new Map();
+  for (const [campaign, list] of byCampaign) {
+    const all = [...list].sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
+    const measured = all.filter(isMeasured);
+
+    const push = (from, to) => {
+      const inRound = all.filter(r =>
+        String(r.date || '') >= String(from.date || '') &&
+        (!to || String(r.date || '') < String(to.date || '')) &&
+        hasAdjustment(r));
+      const round = { campaign, from, to, adjustments: inRound, open: !to };
+      rounds.push(round);
+      for (const r of inRound) ofRecord.set(r.id, round);
+      return round;
+    };
+
+    for (let i = 0; i < measured.length - 1; i++) push(measured[i], measured[i + 1]);
+    if (measured.length) push(measured[measured.length - 1], null);
+
+    // บันทึกที่เกิดก่อนการวัดผลครั้งแรก — ยังไม่มีฐานให้เทียบ
+    const firstDate = measured.length ? String(measured[0].date || '') : null;
+    for (const r of all) {
+      if (!hasAdjustment(r) || ofRecord.has(r.id)) continue;
+      if (firstDate === null || String(r.date || '') < firstDate) {
+        const round = { campaign, from: null, to: measured[0] || null, adjustments: [r], open: false, orphan: true };
+        rounds.push(round);
+        ofRecord.set(r.id, round);
+      }
     }
   }
+
+  _roundIndex = { rounds, ofRecord };
+  _roundRev = Store.rev;
+  return _roundIndex;
+}
+
+function roundOf(rec) {
+  return roundIndex().ofRecord.get(rec.id) || null;
+}
+
+function roundCompare(round, mode = 'auto') {
+  if (!round || !round.from || !round.to) return null;
+  const b = block(round.from, 'before');
+  const a = block(round.to, 'before');
   if (!hasNumbers(b) || !hasNumbers(a)) return null;
   return compareBlocks(b, a, mode);
+}
+
+function roundLabel(round) {
+  if (!round) return '';
+  if (round.orphan) return 'ก่อนเริ่มวัดผล';
+  const from = thaiDate(round.from.date);
+  return round.open ? `รอบตั้งแต่ ${from} — ยังไม่ได้วัดผล`
+                    : `รอบ ${from} – ${thaiDate(round.to.date)}`;
+}
+
+/** เทียบผลของบันทึกหนึ่ง = ผลของรอบวัดผลที่บันทึกนั้นอยู่ */
+function recCompare(rec, mode = 'auto') {
+  return roundCompare(roundOf(rec), mode);
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -1817,6 +1943,8 @@ function renderDashboard() {
 
   renderStatCards();
   renderDaily();
+  renderTagAnalysis();
+  renderRoundList();
   renderProductComparison();
 
   // ตารางภาพรวม
@@ -2080,6 +2208,164 @@ async function copyDailySummary() {
     try { document.execCommand('copy'); toast('คัดลอกสรุปแล้ว'); }
     catch { toast('คัดลอกไม่ได้ — ลองเปิดเว็บผ่าน https'); }
     ta.remove();
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────
+   10a2. ประเภทการปรับไหนเวิร์ก + รายการรอบวัดผล
+   ───────────────────────────────────────────────────────────── */
+
+function closedRounds() {
+  return roundIndex().rounds.filter(r => r.from && r.to && !r.orphan);
+}
+
+/** รวมผลรายประเภทการปรับ จากทุกรอบที่ปิดแล้ว
+ *  รอบหนึ่งมีหลายประเภทปนกัน — ค่าที่ได้จึงเป็นความสัมพันธ์ ไม่ใช่เหตุ-ผล */
+function tagStats(metricKey) {
+  const m = METRIC_BY_KEY[metricKey];
+  const byTag = new Map();
+
+  for (const round of closedRounds()) {
+    const cmp = roundCompare(round);
+    if (!cmp) continue;
+    const row = cmp.rows.find(r => r.key === metricKey);
+    if (!row || row.deltaPct === null) continue;
+
+    const tags = new Set();
+    for (const rec of round.adjustments) {
+      for (const t of String(rec.tags || '').split('|').map(x => x.trim()).filter(Boolean)) tags.add(t);
+    }
+    if (!tags.size) tags.add('(ไม่ระบุประเภท)');
+
+    for (const t of tags) {
+      if (!byTag.has(t)) byTag.set(t, { tag: t, deltas: [], good: 0, rounds: 0, mixedWith: new Set() });
+      const e = byTag.get(t);
+      e.deltas.push(row.deltaPct);
+      e.rounds++;
+      const better = m.better === 'down' ? row.deltaPct < 0 : row.deltaPct > 0;
+      if (better) e.good++;
+      for (const other of tags) if (other !== t) e.mixedWith.add(other);
+    }
+  }
+
+  return [...byTag.values()].map(e => {
+    const avg = e.deltas.reduce((a, b) => a + b, 0) / e.deltas.length;
+    return { ...e, avg, mixed: e.mixedWith.size };
+  }).sort((a, b) => (m.better === 'down' ? a.avg - b.avg : b.avg - a.avg));
+}
+
+function renderTagAnalysis() {
+  const sel = $('#tagMetric');
+  if (!sel) return;
+  if (!sel.options.length) {
+    for (const m of METRICS.filter(x => x.better !== 'neutral')) {
+      sel.append(el('option', { value: m.key }, m.label));
+    }
+    sel.value = 'cpa';
+  }
+  const metricKey = sel.value || 'cpa';
+  const m = METRIC_BY_KEY[metricKey];
+  const host = $('#tagAnalysis');
+  host.innerHTML = '';
+
+  const stats = tagStats(metricKey);
+  const totalRounds = closedRounds().filter(r => roundCompare(r)).length;
+
+  if (!stats.length) {
+    host.append(el('div', { class: 'empty' },
+      el('strong', {}, 'ยังวิเคราะห์ไม่ได้'),
+      'ต้องมีรอบวัดผลที่ปิดแล้วอย่างน้อย 1 รอบ — คือมีบันทึกที่ใส่ตัวเลขสองครั้งขึ้นไปในแคมเปญเดียวกัน'));
+    return;
+  }
+
+  host.append(el('div', { class: 'banner' },
+    el('span', { class: 'icon' }, 'ℹ️'),
+    el('span', {}, `จาก ${totalRounds} รอบวัดผลที่ปิดแล้ว · ` +
+      `${m.label} ${m.better === 'down' ? 'ยิ่งลดยิ่งดี' : 'ยิ่งเพิ่มยิ่งดี'} · ` +
+      'ยิ่งจำนวนรอบเยอะ ตัวเลขยิ่งน่าเชื่อ')));
+
+  const tbl = el('table', { class: 'data' });
+  tbl.append(el('thead', {}, el('tr', {},
+    el('th', {}, 'ประเภทการปรับ'),
+    el('th', {}, 'จำนวนรอบ'),
+    el('th', {}, `${m.short} เปลี่ยนเฉลี่ย`),
+    el('th', {}, 'รอบที่ดีขึ้น'),
+    el('th', {}, 'ปนกับประเภทอื่น'))));
+  const tb = el('tbody');
+  for (const e of stats) {
+    const better = m.better === 'down' ? e.avg < 0 : e.avg > 0;
+    const cls = Math.abs(e.avg) < 0.5 ? 'delta-flat' : better ? 'delta-up' : 'delta-down';
+    const arrow = e.avg > 0 ? '▲' : e.avg < 0 ? '▼' : '＝';
+    tb.append(el('tr', {},
+      el('td', {}, e.tag),
+      el('td', {}, String(e.rounds) + (e.rounds < 3 ? ' ⚠️' : '')),
+      el('td', { class: cls }, `${arrow} ${fmt(Math.abs(e.avg), 1)}%`),
+      el('td', {}, `${e.good}/${e.rounds}`),
+      el('td', { class: 'cell-sub' }, e.mixed ? `${e.mixed} ประเภท` : 'เดี่ยว ๆ')));
+  }
+  tbl.append(tb);
+  host.append(el('div', { class: 'table-wrap' }, tbl));
+
+  if (stats.some(e => e.rounds < 3)) {
+    host.append(el('p', { class: 'card-note', style: 'margin-top:10px' },
+      '⚠️ = มีข้อมูลน้อยกว่า 3 รอบ ยังสรุปอะไรไม่ได้ · ' +
+      'คอลัมน์ "ปนกับประเภทอื่น" บอกว่ารอบเหล่านั้นมีการปรับแบบอื่นร่วมด้วยกี่แบบ ยิ่งเยอะยิ่งแยกผลยาก'));
+  }
+}
+
+function renderRoundList() {
+  const sel = $('#roundCampaign');
+  if (!sel) return;
+  const cur = sel.value;
+  sel.innerHTML = '';
+  sel.append(el('option', { value: '' }, 'ทุกแคมเปญ'));
+  for (const c of Store.campaigns) sel.append(el('option', { value: c.name }, c.name));
+  sel.value = Store.campaigns.some(c => c.name === cur) ? cur : '';
+
+  const host = $('#roundList');
+  host.innerHTML = '';
+  let rounds = roundIndex().rounds.filter(r => !r.orphan && (!sel.value || r.campaign === sel.value));
+  rounds = rounds.sort((a, b) =>
+    String(b.from?.date || '').localeCompare(String(a.from?.date || ''))).slice(0, 20);
+
+  if (!rounds.length) {
+    host.append(el('div', { class: 'empty' },
+      el('strong', {}, 'ยังไม่มีรอบวัดผล'),
+      'บันทึกพร้อมตัวเลขอย่างน้อยหนึ่งครั้งเพื่อเริ่มรอบแรก'));
+    return;
+  }
+
+  for (const round of rounds) {
+    const cmp = roundCompare(round);
+    const box = el('div', { class: 'round' + (round.open ? ' is-open' : '') });
+    box.append(el('div', { class: 'round-head' },
+      el('span', { class: 'r-title' }, roundLabel(round)),
+      el('span', { class: 'rec-campaign' }, round.campaign),
+      el('span', { class: 'r-meta' }, `ปรับ ${round.adjustments.length} ครั้ง`),
+      cmp ? verdictBadge(cmp.verdict) : verdictBadge('pending')));
+
+    if (cmp) {
+      const keys = cmp.rows.filter(r => ['cpa', 'conversions', 'cvr', 'ctr'].includes(r.key) && r.deltaPct !== null);
+      box.append(el('div', { class: 'rec-meta', html: keys.map(r => {
+        const c = r.good === null ? 'delta-flat' : r.good ? 'delta-up' : 'delta-down';
+        const a = r.dir === 'up' ? '▲' : r.dir === 'down' ? '▼' : '＝';
+        return `${esc(r.metric.label)} <span class="${c}">${a} ${fmt(Math.abs(r.deltaPct), 1)}%</span>`;
+      }).join(' &nbsp;·&nbsp; ') }));
+    } else if (round.open) {
+      box.append(el('div', { class: 'card-note' }, 'ยังไม่ได้ใส่ตัวเลขปิดรอบ — บันทึกพร้อมตัวเลขเมื่อไหร่ก็รู้ผลทันที'));
+    }
+
+    const adjs = el('div', { class: 'round-adjs' });
+    for (const rec of round.adjustments.slice(0, 8)) {
+      adjs.append(el('div', { class: 'adj' },
+        el('b', {}, thaiDate(rec.date) + ' — '),
+        String(rec.change_detail || '').replace(/\s+/g, ' ').slice(0, 130)));
+    }
+    if (round.adjustments.length > 8) {
+      adjs.append(el('div', { class: 'adj' }, `+ อีก ${round.adjustments.length - 8} ครั้ง`));
+    }
+    box.append(adjs);
+    host.append(box);
   }
 }
 
@@ -3314,6 +3600,8 @@ async function boot() {
   $('#dashRecord').addEventListener('change', renderDashboard);
   $('#dashMode').addEventListener('change', renderDashboard);
   $('#prodMetric').addEventListener('change', renderProductComparison);
+  $('#tagMetric').addEventListener('change', renderTagAnalysis);
+  $('#roundCampaign').addEventListener('change', renderRoundList);
   $('#prodGroupFilter').addEventListener('change', renderProductComparison);
   window.addEventListener('resize', () => {
     if (!$('#panel-dashboard').hidden) renderProductComparison();
