@@ -1089,13 +1089,6 @@ const Form = {
     const box = $('#numbersBox');
     if (box) box.open = !!(rec && isMeasured(rec));
 
-    // กล่อง "ตัวเลขหลังปรับ" โผล่เฉพาะบันทึกที่มีตัวเลขชุดนั้นอยู่แล้ว
-    const afterCard = $('#afterCard');
-    if (afterCard) {
-      const has = !!(rec && hasNumbers(block(rec, 'after')));
-      afterCard.hidden = !has;
-      afterCard.open = false;
-    }
     this.refreshBaseline();
     window.scrollTo({ top: 0, behavior: 'smooth' });
   },
@@ -1641,28 +1634,21 @@ function renderTimeline() {
   const list = filteredRecords();
   $('#timelineCount').textContent = `${list.length} บันทึก`;
 
-  // สรุปรวม
-  const tiles = $('#timelineTiles');
-  tiles.innerHTML = '';
+  // สรุปรวมแบบบรรทัดเดียว (การ์ดสีบนแดชบอร์ดสรุปภาพใหญ่ไปแล้ว)
+  const bar = $('#timelineTiles');
+  bar.innerHTML = '';
   const withResult = list.map(r => ({ r, cmp: recCompare(r) })).filter(x => x.cmp);
   const good = withResult.filter(x => x.cmp.verdict === 'up').length;
   const bad = withResult.filter(x => x.cmp.verdict === 'down').length;
-  const flat = withResult.filter(x => x.cmp.verdict === 'flat').length;
   const pending = list.length - withResult.length;
-  const stats = [
-    ['จำนวนการปรับ', String(list.length), 'ในช่วงที่เลือก'],
-    ['ดีขึ้น', String(good), withResult.length ? `${Math.round(good / withResult.length * 100)}% ของที่รู้ผลแล้ว` : '—'],
-    ['แย่ลง', String(bad), '—'],
-    ['ทรงตัว', String(flat), '—'],
-    ['ยังรอผล', String(pending), 'ยังไม่มีตัวเลขหลังปรับ'],
-    ['แคมเปญที่แตะ', String(new Set(list.map(r => r.campaign)).size), '—']
-  ];
-  for (const [label, value, sub] of stats) {
-    tiles.append(el('div', { class: 'tile' },
-      el('div', { class: 'tile-label' }, label),
-      el('div', { class: 'tile-value' }, value),
-      el('div', { class: 'tile-sub' }, sub)));
-  }
+  const campaigns = new Set(list.map(r => r.campaign)).size;
+
+  bar.append(
+    el('span', { class: 'sb-main' }, `${list.length} บันทึก`),
+    el('span', { class: 'sb-item delta-up' }, `▲ ดีขึ้น ${good}`),
+    el('span', { class: 'sb-item delta-down' }, `▼ แย่ลง ${bad}`),
+    el('span', { class: 'sb-item delta-flat' }, `⋯ รอผล ${pending}`),
+    el('span', { class: 'sb-item delta-flat' }, `${campaigns} แคมเปญ`));
 
   const host = $('#timelineList');
   host.innerHTML = '';
@@ -1722,10 +1708,13 @@ function renderTimeline() {
     }
 
     const actions = el('div', { class: 'rec-actions' },
-      el('button', { class: 'btn btn-sm', text: '✎ แก้ไข', onclick: () => { Form.load(rec); showTab('new'); } }),
-      el('button', { class: 'btn btn-sm', text: '📊 ดูผลก่อน/หลัง', onclick: () => { $('#dashRecord').value = rec.id; showTab('dashboard'); } }));
-    if (!hasNumbers(block(rec, 'after'))) {
-      actions.append(el('button', { class: 'btn btn-sm btn-primary', text: '＋ กรอกผลหลังปรับ', onclick: () => openAfterModal(rec) }));
+      el('button', { class: 'btn btn-sm', text: '✎ แก้ไข', onclick: () => { Form.load(rec); showTab('new'); } }));
+    if (round && round.open) {
+      actions.append(el('button', {
+        class: 'btn btn-sm btn-primary', text: '＋ ใส่ตัวเลขวัดผล',
+        title: 'สร้างบันทึกใหม่พร้อมตัวเลข เพื่อปิดรอบนี้',
+        onclick: () => startMeasurement(rec.campaign)
+      }));
     }
     actions.append(el('button', { class: 'btn btn-sm', text: '⧉ ทำซ้ำ', onclick: () => {
       const copy = { ...rec, id: '', date: todayISO(), result_note: '' };
@@ -1831,147 +1820,16 @@ function recCompare(rec, mode = 'auto') {
 }
 
 /* ─────────────────────────────────────────────────────────────
-   9. Modal กรอกผลหลังปรับ
-   ───────────────────────────────────────────────────────────── */
-
-let afterModalRec = null;
-
-function openAfterModal(rec) {
-  afterModalRec = rec;
-  $('#afterModalSub').textContent =
-    `${rec.campaign} · ปรับเมื่อ ${thaiDate(rec.date)} · ${(rec.change_detail || '').slice(0, 90)}`;
-  const host = $('#afterModalFields');
-  buildMetricFields(host, 'am', () => applyDerived(host, 'am', $('#afterModalDerived')));
-  $('#am_start').value = rec.after_start || rec.date || '';
-  $('#am_end').value = rec.after_end || todayISO();
-  for (const m of METRICS) {
-    const v = num(rec[`after_${m.key}`]);
-    $(`#am_${m.key}`).value = v === null ? '' : round(v, m.dec);
-  }
-  $('#afterModalNote').value = rec.result_note || '';
-  applyDerived(host, 'am', $('#afterModalDerived'));
-  $('#afterModal').showModal();
-}
-
-async function commitAfterModal() {
-  if (!afterModalRec) return;
-  const solved = solveBlock(readBlock('am')).values;
-  const patch = { ...afterModalRec };
-  patch.after_start = $('#am_start').value;
-  patch.after_end = $('#am_end').value;
-  for (const m of METRICS) patch[`after_${m.key}`] = solved[m.key] === null ? '' : round(solved[m.key], m.dec);
-  patch.result_note = $('#afterModalNote').value.trim();
-  patch.status = 'มีผลแล้ว';
-  try {
-    await Store.update(patch);
-    toast('บันทึกผลหลังปรับแล้ว');
-    refreshAll();
-  } catch (err) {
-    toast('บันทึกไม่สำเร็จ: ' + (err.message || err), 5000);
-  }
-  afterModalRec = null;
-}
-
-/* ─────────────────────────────────────────────────────────────
-   10. แดชบอร์ด
+   9. แดชบอร์ด
    ───────────────────────────────────────────────────────────── */
 
 function renderDashboard() {
-  const sel = $('#dashRecord');
-  const prevValue = sel.value;
-  const list = Store.sorted();
-  sel.innerHTML = '';
-  for (const r of list) {
-    sel.append(el('option', { value: r.id },
-      `${thaiDate(r.date)} · ${r.campaign} · ${(r.change_detail || '').replace(/\s+/g, ' ').slice(0, 48)}`));
-  }
-  if (prevValue && list.some(r => r.id === prevValue)) sel.value = prevValue;
-  else {
-    // ค่าเริ่มต้น: บันทึกล่าสุดที่มีตัวเลขครบพอจะเทียบก่อน/หลังได้
-    const firstComparable = list.find(r => recCompare(r));
-    if (firstComparable) sel.value = firstComparable.id;
-  }
-
-  const mode = $('#dashMode').value;
-  const host = $('#dashContent');
-  host.innerHTML = '';
-  const rec = list.find(r => r.id === sel.value);
-
-  if (!rec) {
-    host.append(el('div', { class: 'empty' },
-      el('strong', {}, 'ยังไม่มีบันทึก'),
-      'เริ่มบันทึกการปรับครั้งแรกที่แท็บ "บันทึกใหม่"'));
-  } else {
-    const cmp = recCompare(rec, mode);
-    if (!cmp) {
-      host.append(el('div', { class: 'empty' },
-        el('strong', {}, 'ยังเทียบไม่ได้'),
-        'บันทึกนี้ยังไม่มีตัวเลขครบทั้งก่อนและหลังปรับ',
-        el('div', { style: 'margin-top:12px' },
-          el('button', { class: 'btn btn-primary', text: '＋ กรอกผลหลังปรับ', onclick: () => openAfterModal(rec) }))));
-    } else {
-      const head = el('div', { class: 'card' },
-        el('div', { class: 'card-head' },
-          el('h2', {}, `${thaiDate(rec.date)} · ${rec.campaign}`),
-          verdictBadge(cmp.verdict, cmp.score !== null ? `คะแนน ${fmt(cmp.score * 100, 0)}` : '')),
-        el('div', { class: 'rec-body' }, rec.change_detail || ''),
-        cmp.perDay ? el('div', { class: 'banner warn', style: 'margin-top:12px' },
-          el('span', { class: 'icon' }, '⚖️'),
-          el('span', {}, `ช่วงก่อนปรับยาว ${cmp.bDays} วัน แต่หลังปรับยาว ${cmp.aDays} วัน — ` +
-            'ตัวเลขสะสม (Impressions, Clicks, Cost, Conversions) จึงถูกแปลงเป็นค่าเฉลี่ยต่อวันก่อนเทียบ เพื่อไม่ให้ช่วงที่ยาวกว่าดูดีเกินจริง')) : null,
-        el('div', { style: 'margin-top:14px' }, deltaTiles(cmp)));
-      host.append(head);
-
-      const detail = el('div', { class: 'card' },
-        el('div', { class: 'card-head' },
-          el('h2', {}, 'รายละเอียดทุกตัวชี้วัด'),
-          el('span', { class: 'card-note' },
-            `ก่อน: ${rec.before_start || '—'} → ${rec.before_end || '—'}` +
-            `  ·  หลัง: ${rec.after_start || '—'} → ${rec.after_end || '—'}`)),
-        deltaTable(cmp));
-      host.append(detail);
-
-      if (rec.expected || rec.result_note || rec.reason) {
-        host.append(el('div', { class: 'card' },
-          el('div', { class: 'card-head' }, el('h2', {}, 'บันทึกประกอบ')),
-          rec.reason ? el('div', { class: 'rec-meta', html: '<b>เหตุผลที่ปรับ:</b> ' + esc(rec.reason) }) : null,
-          rec.expected ? el('div', { class: 'rec-meta', html: '<b>ผลที่คาดหวัง:</b> ' + esc(rec.expected) }) : null,
-          rec.result_note ? el('div', { class: 'rec-meta', html: '<b>ผลที่เกิดขึ้นจริง:</b> ' + esc(rec.result_note) }) : null));
-      }
-    }
-  }
-
+  const mode = $('#dashMode')?.value || 'auto';
   renderStatCards();
   renderDaily();
   renderTagAnalysis();
-  renderRoundList();
+  renderRoundList(mode);
   renderProductComparison();
-
-  // ตารางภาพรวม
-  const tb = $('#allAdjTable tbody');
-  tb.innerHTML = '';
-  for (const r of list) {
-    const cmp = recCompare(r, mode);
-    const cell = key => {
-      if (!cmp) return el('td', { class: 'delta-flat' }, '—');
-      const row = cmp.rows.find(x => x.key === key);
-      if (!row || row.deltaPct === null) return el('td', { class: 'delta-flat' }, '—');
-      const cls = row.good === null ? 'delta-flat' : row.good ? 'delta-up' : 'delta-down';
-      const arrow = row.dir === 'up' ? '▲' : row.dir === 'down' ? '▼' : '＝';
-      return el('td', { class: cls }, `${arrow} ${fmt(Math.abs(row.deltaPct), 1)}%`);
-    };
-    const tr = el('tr', {},
-      el('td', {},
-        el('div', {}, thaiDate(r.date)),
-        el('div', { class: 'tile-sub' },
-          [recProduct(r), r.campaign].filter(Boolean).join(' · ') || '—')),
-      el('td', { style: 'text-align:left;max-width:280px' }, (r.change_detail || '').replace(/\s+/g, ' ').slice(0, 110)),
-      cell('cpa'), cell('conversions'), cell('cvr'), cell('ctr'), cell('impr_share'),
-      el('td', {}, cmp ? verdictBadge(cmp.verdict) : verdictBadge('pending')));
-    tr.style.cursor = 'pointer';
-    tr.addEventListener('click', () => { $('#dashRecord').value = r.id; renderDashboard(); window.scrollTo({ top: 0, behavior: 'smooth' }); });
-    tb.append(tr);
-  }
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -2313,7 +2171,7 @@ function renderTagAnalysis() {
   }
 }
 
-function renderRoundList() {
+function renderRoundList(mode = 'auto') {
   const sel = $('#roundCampaign');
   if (!sel) return;
   const cur = sel.value;
@@ -2335,38 +2193,68 @@ function renderRoundList() {
     return;
   }
 
-  for (const round of rounds) {
-    const cmp = roundCompare(round);
-    const box = el('div', { class: 'round' + (round.open ? ' is-open' : '') });
-    box.append(el('div', { class: 'round-head' },
+  const firstClosed = rounds.findIndex(r => !r.open && roundCompare(r, mode));
+
+  rounds.forEach((round, idx) => {
+    const cmp = roundCompare(round, mode);
+    const box = el('details', { class: 'round' + (round.open ? ' is-open' : '') });
+    if (idx === firstClosed) box.open = true;   // กางรอบล่าสุดที่มีผลไว้ให้เลย
+
+    box.append(el('summary', { class: 'round-head' },
       el('span', { class: 'r-title' }, roundLabel(round)),
       el('span', { class: 'rec-campaign' }, round.campaign),
       el('span', { class: 'r-meta' }, `ปรับ ${round.adjustments.length} ครั้ง`),
       cmp ? verdictBadge(cmp.verdict) : verdictBadge('pending')));
 
+    const body = el('div', { class: 'round-body' });
+
     if (cmp) {
-      const keys = cmp.rows.filter(r => ['cpa', 'conversions', 'cvr', 'ctr'].includes(r.key) && r.deltaPct !== null);
-      box.append(el('div', { class: 'rec-meta', html: keys.map(r => {
-        const c = r.good === null ? 'delta-flat' : r.good ? 'delta-up' : 'delta-down';
-        const a = r.dir === 'up' ? '▲' : r.dir === 'down' ? '▼' : '＝';
-        return `${esc(r.metric.label)} <span class="${c}">${a} ${fmt(Math.abs(r.deltaPct), 1)}%</span>`;
-      }).join(' &nbsp;·&nbsp; ') }));
+      if (cmp.perDay) {
+        body.append(el('p', { class: 'card-note', style: 'margin-bottom:12px' },
+          `ช่วงก่อน ${cmp.bDays} วัน · ช่วงนี้ ${cmp.aDays} วัน — ตัวเลขสะสมถูกแปลงเป็นค่าเฉลี่ยต่อวันก่อนเทียบ`));
+      }
+      body.append(deltaTiles(cmp));
+      body.append(el('div', { style: 'margin-top:14px' }, deltaTable(cmp)));
     } else if (round.open) {
-      box.append(el('div', { class: 'card-note' }, 'ยังไม่ได้ใส่ตัวเลขปิดรอบ — บันทึกพร้อมตัวเลขเมื่อไหร่ก็รู้ผลทันที'));
+      body.append(el('div', { class: 'banner warn' },
+        el('span', { class: 'icon' }, '⏳'),
+        el('span', {}, 'รอบนี้ยังไม่ได้ปิด — ',
+          el('button', {
+            class: 'link', type: 'button',
+            onclick: e => { e.preventDefault(); startMeasurement(round.campaign); }
+          }, 'บันทึกตัวเลขวัดผลตอนนี้'))));
     }
 
     const adjs = el('div', { class: 'round-adjs' });
-    for (const rec of round.adjustments.slice(0, 8)) {
+    for (const rec of round.adjustments) {
+      const tags = String(rec.tags || '').split('|').map(x => x.trim()).filter(Boolean);
       adjs.append(el('div', { class: 'adj' },
         el('b', {}, thaiDate(rec.date) + ' — '),
-        String(rec.change_detail || '').replace(/\s+/g, ' ').slice(0, 130)));
+        String(rec.change_detail || '').replace(/\s+/g, ' ').slice(0, 160),
+        tags.length ? el('span', { class: 'cell-sub' }, '  · ' + tags.join(', ')) : null,
+        el('button', {
+          class: 'link', type: 'button', style: 'margin-left:8px',
+          onclick: e => { e.preventDefault(); Form.load(rec); showTab('new'); }
+        }, 'แก้')));
     }
-    if (round.adjustments.length > 8) {
-      adjs.append(el('div', { class: 'adj' }, `+ อีก ${round.adjustments.length - 8} ครั้ง`));
-    }
-    box.append(adjs);
+    body.append(el('div', { class: 'section-label', style: 'margin:16px 0 6px' },
+      `การปรับในรอบนี้ (${round.adjustments.length})`), adjs);
+
+    box.append(body);
     host.append(box);
-  }
+  });
+}
+
+/** พาไปหน้าบันทึกใหม่ พร้อมเปิดกล่องตัวเลขให้เลย — แทนการแก้ช่อง after ด้วยมือ */
+function startMeasurement(campaign) {
+  Form.reset();
+  $('#f_campaign').value = campaign;
+  Form.onCampaignInput();
+  Form.refreshBaseline();
+  const box = $('#numbersBox');
+  if (box) box.open = true;
+  showTab('new');
+  setTimeout(() => $('#before_impressions')?.focus(), 200);
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -3597,17 +3485,13 @@ async function boot() {
     toast('โหลดข้อมูลใหม่แล้ว');
   });
 
-  $('#dashRecord').addEventListener('change', renderDashboard);
   $('#dashMode').addEventListener('change', renderDashboard);
   $('#prodMetric').addEventListener('change', renderProductComparison);
   $('#tagMetric').addEventListener('change', renderTagAnalysis);
-  $('#roundCampaign').addEventListener('change', renderRoundList);
+  $('#roundCampaign').addEventListener('change', () => renderRoundList($('#dashMode').value));
   $('#prodGroupFilter').addEventListener('change', renderProductComparison);
   window.addEventListener('resize', () => {
     if (!$('#panel-dashboard').hidden) renderProductComparison();
-  });
-  $('#afterModal').addEventListener('close', e => {
-    if ($('#afterModal').returnValue === 'save') commitAfterModal();
   });
 
   // เปิดหน้าให้ใช้งานได้ทันทีจากข้อมูลที่แคชไว้ ไม่ต้องรอ Google ตอบ
