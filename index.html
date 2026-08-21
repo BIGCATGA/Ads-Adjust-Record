@@ -100,32 +100,35 @@
       </div>
     </div>
 
-    <!-- ผลก่อนปรับ -->
+    <!-- ตัวเลขล่าสุด -->
     <div class="card">
       <div class="card-head">
-        <h2>ผลก่อนปรับ</h2>
-        <span class="card-note" id="beforeAutoNote"></span>
-        <button type="button" class="btn btn-sm" id="pullPrevBtn">↧ ดึงจากบันทึกล่าสุด</button>
+        <h2>ตัวเลขล่าสุด</h2>
+        <span class="card-note">ผลงานตั้งแต่ปรับครั้งก่อนจนถึงตอนนี้ — กรอกชุดเดียว ระบบจับคู่กับบันทึกก่อนหน้าให้เอง</span>
       </div>
+
+      <div id="baselineStrip"></div>
       <div id="beforeFields"></div>
       <div class="calc-note" id="beforeDerived"></div>
-    </div>
+      <div id="livePreview"></div>
 
-    <!-- ผลหลังปรับ -->
-    <div class="card">
-      <div class="card-head">
-        <h2>ผลหลังปรับ</h2>
-        <span class="card-note">ปล่อยว่างได้ — บันทึกครั้งถัดไปของแคมเปญนี้จะเติมให้เอง</span>
-      </div>
-      <div id="afterFields"></div>
-      <div class="calc-note" id="afterDerived"></div>
+      <details class="more" id="afterCard" style="margin-top:18px" hidden>
+        <summary>ตัวเลขหลังปรับที่บันทึกไว้แล้ว (ปกติไม่ต้องแตะ)</summary>
+        <div class="more-body">
+          <p class="card-note" style="margin-bottom:12px">
+            ช่องชุดนี้ปกติระบบเติมให้เองจากบันทึกครั้งถัดไปของแคมเปญเดียวกัน
+            จะเห็นก็ต่อเมื่อบันทึกนี้มีตัวเลขอยู่แล้ว
+          </p>
+          <div id="afterFields"></div>
+          <div class="calc-note" id="afterDerived"></div>
+        </div>
+      </details>
+
       <label class="field" style="margin-top:16px">
         <span class="field-label">สรุปผลที่เกิดขึ้นจริง <span class="field-unit">ไม่บังคับ</span></span>
         <textarea id="f_result_note" rows="2" placeholder="เช่น CPA ลดลงตามคาด แต่ Impression Share ยังไม่ถึงเป้า"></textarea>
       </label>
     </div>
-
-    <div id="livePreview"></div>
 
     <div class="action-bar">
       <button type="submit" class="btn btn-primary" id="saveBtn">บันทึก</button>
