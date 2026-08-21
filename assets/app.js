@@ -1941,6 +1941,21 @@ const STAT_ICONS = {
   clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/>'
 };
 
+/** วงแหวนเปอร์เซ็นต์บนการ์ดสถิติ — pct = 0-100 (null = ไม่วาด) */
+function statRing(pct) {
+  if (pct === null || !Number.isFinite(pct)) return null;
+  const p = Math.max(0, Math.min(100, pct));
+  const r = 21, circ = 2 * Math.PI * r;
+  const span = el('span', { class: 'sc-ring' });
+  span.innerHTML =
+    `<svg viewBox="0 0 52 52" role="img" aria-label="${Math.round(p)} เปอร์เซ็นต์">` +
+    `<circle cx="26" cy="26" r="${r}"></circle>` +
+    `<circle cx="26" cy="26" r="${r}" stroke-dasharray="${circ.toFixed(1)}" ` +
+    `stroke-dashoffset="${(circ * (1 - p / 100)).toFixed(1)}"></circle>` +
+    `<text x="26" y="26">${Math.round(p)}%</text></svg>`;
+  return span;
+}
+
 function svgIcon(name) {
   const span = el('span', { class: 'sc-icon' });
   span.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${STAT_ICONS[name] || ''}</svg>`;
@@ -1994,24 +2009,26 @@ function renderStatCards() {
   const nowJudged = judged(now).length;
   const pendingNow = now.length - nowJudged;
 
+  const ratio = n => (nowJudged ? n / nowJudged * 100 : null);
   const cards = [
-    { cls: 'c1', icon: 'edit',  label: 'การปรับเดือนนี้', value: now.length,
+    { cls: 'c3', icon: 'edit', label: 'การปรับเดือนนี้', value: now.length, active: true,
       sub: subOf(now.length, prev.length) },
-    { cls: 'c4', icon: 'up',    label: 'ได้ผล ดีขึ้น', value: nowUp,
+    { cls: 'c4', icon: 'up', label: 'ได้ผล ดีขึ้น', value: nowUp, ring: ratio(nowUp),
       sub: nowJudged ? `${Math.round(nowUp / nowJudged * 100)}% ของที่รู้ผลแล้ว` : 'ยังไม่มีที่รู้ผล' },
-    { cls: 'c2', icon: 'down',  label: 'แย่ลง', value: nowDown,
+    { cls: 'c2', icon: 'down', label: 'แย่ลง', value: nowDown, ring: ratio(nowDown),
       sub: nowJudged ? `${Math.round(nowDown / nowJudged * 100)}% ของที่รู้ผลแล้ว` : 'ยังไม่มีที่รู้ผล' },
-    { cls: 'c3', icon: 'clock', label: 'รอผล', value: pendingNow,
+    { cls: 'c1', icon: 'clock', label: 'รอผล', value: pendingNow,
+      ring: now.length ? pendingNow / now.length * 100 : null,
       sub: pendingNow ? 'ยังไม่มีตัวเลขรอบถัดไป' : 'รู้ผลครบแล้ว' }
   ];
 
   for (const c of cards) {
-    host.append(el('div', { class: `stat-card ${c.cls}` },
+    host.append(el('div', { class: `stat-card ${c.cls}${c.active ? ' is-active' : ''}` },
       el('div', { class: 'sc-body' },
         el('div', { class: 'sc-label' }, c.label),
         el('div', { class: 'sc-value' }, String(c.value), el('small', {}, ' รายการ')),
         el('div', { class: 'sc-sub' }, c.sub)),
-      svgIcon(c.icon)));
+      (c.ring !== undefined && c.ring !== null) ? statRing(c.ring) : svgIcon(c.icon)));
   }
 }
 
@@ -2039,6 +2056,21 @@ function initSidebar() {
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape' && document.body.classList.contains('nav-open')) close();
   });
+
+  // ช่องค้นหาบนแถบบน — ส่งต่อไปที่ตัวกรองข้อความของไทม์ไลน์
+  const gs = $('#globalSearch');
+  if (gs) {
+    let t = null;
+    const run = () => {
+      $('#flt_q').value = gs.value;
+      if ($('#panel-timeline').hidden) showTab('timeline'); else renderTimeline();
+    };
+    gs.addEventListener('input', () => { clearTimeout(t); t = setTimeout(run, 260); });
+    gs.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); clearTimeout(t); run(); }
+      if (e.key === 'Escape') { gs.value = ''; clearTimeout(t); run(); gs.blur(); }
+    });
+  }
 
   $('#quickNew').addEventListener('click', () => { Form.reset(); showTab('new'); });
   $('#quickToday').addEventListener('click', () => {
@@ -2621,22 +2653,24 @@ function renderBudgetPage() {
   const stats = $('#budgetStats');
   stats.innerHTML = '';
   const cards = [
-    { cls: 'c1', icon: 'edit', label: 'งบรวมต่อวัน', value: fmt(totalBudget, 0), unit: ' ฿',
-      sub: `จาก ${withBudget.length} แคมเปญที่บันทึกงบไว้` },
-    { cls: 'c3', icon: 'up', label: 'งบรวมต่อเดือน', value: fmt(totalBudget * 30.4, 0), unit: ' ฿',
+    { cls: 'c3', icon: 'edit', label: 'งบรวมต่อวัน', value: fmt(totalBudget, 0), unit: ' ฿',
+      active: true, sub: `จาก ${withBudget.length} แคมเปญที่บันทึกงบไว้` },
+    { cls: 'c4', icon: 'up', label: 'งบรวมต่อเดือน', value: fmt(totalBudget * 30.4, 0), unit: ' ฿',
       sub: 'ประมาณจากงบต่อวัน × 30.4' },
-    { cls: 'c4', icon: 'clock', label: 'แคมเปญทั้งหมด', value: String(all.length), unit: '',
-      sub: 'ที่เคยมีบันทึก' },
-    { cls: 'c2', icon: 'down', label: 'ยังไม่ได้บันทึกค่า', value: String(missing), unit: '',
+    { cls: 'c1', icon: 'clock', label: 'บันทึกค่าไว้แล้ว', value: String(withBudget.length), unit: '',
+      ring: all.length ? withBudget.length / all.length * 100 : null,
+      sub: `จากทั้งหมด ${all.length} แคมเปญ` },
+    { cls: missing ? 'c2' : 'c4', icon: missing ? 'down' : 'up',
+      label: 'ยังไม่ได้บันทึกค่า', value: String(missing), unit: '',
       sub: missing ? 'แคมเปญที่ขาดงบหรือ bid' : 'บันทึกครบทุกแคมเปญ' }
   ];
   for (const c of cards) {
-    stats.append(el('div', { class: `stat-card ${c.cls}` },
+    stats.append(el('div', { class: `stat-card ${c.cls}${c.active ? ' is-active' : ''}` },
       el('div', { class: 'sc-body' },
         el('div', { class: 'sc-label' }, c.label),
         el('div', { class: 'sc-value' }, c.value, c.unit ? el('small', {}, c.unit) : null),
         el('div', { class: 'sc-sub' }, c.sub)),
-      svgIcon(c.icon)));
+      (c.ring !== undefined && c.ring !== null) ? statRing(c.ring) : svgIcon(c.icon)));
   }
 
   const tbody = $('#budgetTable').querySelector('tbody');
@@ -3924,8 +3958,7 @@ function initShortcuts(help) {
     // / = กระโดดไปช่องค้นหาในไทม์ไลน์
     if (e.key === '/') {
       e.preventDefault();
-      showTab('timeline');
-      setTimeout(() => $('#flt_q').focus(), 60);
+      $('#globalSearch')?.focus();
       return;
     }
     // ? = คู่มือปุ่มลัด
