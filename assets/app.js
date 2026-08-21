@@ -23,7 +23,7 @@ const LS_CONFIG = 'aar.config.v1';
        ถ้าอยากเปลี่ยน: แก้ที่นี่ + แก้ API_TOKEN ใน Code.gs ให้ตรงกัน แล้ว Deploy ใหม่
    ═══════════════════════════════════════════════════════════════ */
 const DEFAULT_CONFIG = {
-  url: 'https://script.google.com/macros/s/AKfycbx2PyVIOafdB8U1U6iN1GBAipn26MrbcgnHrX3olZnb9VQ_wr-iU9Y7oTaAp0aiD3-c/exec',
+  url: 'https://script.google.com/macros/s/AKfycbzCRjbteV9eVQnOaCECKpKbuTlrhHjBA3YQ7MQqO0IEVImMMn8ADPykWU-4Y1iLWk89/exec',
   token: 'my-secret-key-Ads-Adjust-Record-bigcat-19082026'
 };
 const LS_CACHE = 'aar.records.v1';
