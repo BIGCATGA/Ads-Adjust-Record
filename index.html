@@ -343,7 +343,8 @@
 
   <div class="card">
     <div class="card-head"><h2>เชื่อมต่อ Google Sheet</h2></div>
-    <p class="card-note">URL ของ Apps Script Web App (ลงท้าย <code>/exec</code>) และรหัสลับใน <code>Code.gs</code> — เก็บไว้ในเบราว์เซอร์เครื่องนี้เท่านั้น ไม่ถูกอัปขึ้น GitHub</p>
+    <div id="connSource"></div>
+    <p class="card-note">เว็บนี้ต่อชีตให้อัตโนมัติอยู่แล้ว — ช่องด้านล่างมีไว้เผื่ออยากชี้ไปชีตอื่นเฉพาะเบราว์เซอร์นี้ (ไม่กระทบคนอื่นที่เปิดลิงก์เดียวกัน)</p>
     <div class="field-row cols-2" style="margin-top:14px">
       <label class="field">
         <span class="field-label">Web App URL</span>
@@ -356,7 +357,8 @@
     </div>
     <div class="btn-row">
       <button class="btn btn-primary" id="cfgSave">บันทึกและทดสอบการเชื่อมต่อ</button>
-      <button class="btn btn-ghost" id="cfgClear">ตัดการเชื่อมต่อ</button>
+      <button class="btn" id="cfgDefault">ใช้ชีตเริ่มต้น</button>
+      <button class="btn btn-ghost" id="cfgClear">ใช้แบบออฟไลน์</button>
     </div>
     <div id="cfgResult" style="margin-top:14px"></div>
     <details class="help">
