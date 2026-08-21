@@ -127,14 +127,20 @@
     <!-- ตัวเลขล่าสุด -->
     <div class="card">
       <div class="card-head">
-        <h2>ตัวเลขล่าสุด</h2>
-        <span class="card-note">ผลงานตั้งแต่ปรับครั้งก่อนจนถึงตอนนี้ — กรอกชุดเดียว ระบบจับคู่กับบันทึกก่อนหน้าให้เอง</span>
+        <h2>ตัวเลขวัดผล</h2>
+        <span class="card-note">ไม่บังคับ — วันที่แค่มาปรับ ไม่ต้องกรอก กรอกเฉพาะวันที่มาเช็กผลจาก Google Ads</span>
       </div>
 
       <div id="baselineStrip"></div>
-      <div id="beforeFields"></div>
-      <div class="calc-note" id="beforeDerived"></div>
-      <div id="livePreview"></div>
+
+      <details class="more numbers-box" id="numbersBox">
+        <summary id="numbersSummary">ใส่ตัวเลขวัดผลรอบนี้</summary>
+        <div class="more-body">
+          <div id="beforeFields"></div>
+          <div class="calc-note" id="beforeDerived"></div>
+          <div id="livePreview"></div>
+        </div>
+      </details>
 
       <details class="more" id="afterCard" style="margin-top:18px" hidden>
         <summary>ตัวเลขหลังปรับที่บันทึกไว้แล้ว (ปกติไม่ต้องแตะ)</summary>
@@ -288,6 +294,28 @@
         <tbody></tbody>
       </table>
     </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <h2>ประเภทการปรับไหนเวิร์ก</h2>
+      <span class="card-note">ดูจากรอบวัดผลที่ปิดแล้ว — รอบหนึ่งมักมีการปรับหลายแบบ ตัวเลขนี้จึงเป็นแนวโน้ม ไม่ใช่คำตัดสิน</span>
+      <label class="field w-md" style="margin-left:auto">
+        <select id="tagMetric"></select>
+      </label>
+    </div>
+    <div id="tagAnalysis"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <h2>รอบวัดผล</h2>
+      <span class="card-note">แต่ละรอบ = ช่วงระหว่างการวัดผลสองครั้ง</span>
+      <label class="field w-md" style="margin-left:auto">
+        <select id="roundCampaign"><option value="">ทุกแคมเปญ</option></select>
+      </label>
+    </div>
+    <div id="roundList"></div>
   </div>
 
   <div class="card">
