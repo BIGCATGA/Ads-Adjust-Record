@@ -8,7 +8,7 @@
    1. ค่าคงที่
    ───────────────────────────────────────────────────────────── */
 
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.9.0';
 const LS_CONFIG = 'aar.config.v1';
 
 /* ═══════════════════════════════════════════════════════════════
@@ -4017,10 +4017,11 @@ function updateConnBadge() {
           'ระหว่างนี้บันทึกได้ตามปกติ ข้อมูลเก็บในเครื่องไว้ก่อน แล้วกด "ลองเชื่อมต่อใหม่" เพื่อส่งขึ้นชีต'))));
   }
 
-  $('#storageInfo').textContent = Store.online
+  $('#storageInfo').textContent = (Store.online
     ? `โหมดปัจจุบัน: Google Sheet (มีสำเนาสำรองในเบราว์เซอร์)` +
       (Store.lastSyncAt ? ` · ซิงก์ล่าสุด ${new Date(Store.lastSyncAt).toLocaleTimeString('th-TH')}` : '')
-    : 'โหมดปัจจุบัน: เก็บในเบราว์เซอร์เครื่องนี้';
+    : 'โหมดปัจจุบัน: เก็บในเบราว์เซอร์เครื่องนี้')
+    + ` · เวอร์ชัน ${APP_VERSION}`;
 }
 
 function refreshAll() {
