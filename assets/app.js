@@ -8,7 +8,7 @@
    1. ค่าคงที่
    ───────────────────────────────────────────────────────────── */
 
-const APP_VERSION = '1.11.1';
+const APP_VERSION = '1.13.0';
 const LS_CONFIG = 'aar.config.v1';
 
 /* ═══════════════════════════════════════════════════════════════
@@ -594,17 +594,19 @@ const Store = {
       this.records = Array.isArray(raw.records) ? raw.records : [];
       this.rev++;
       this.campaigns = Array.isArray(raw.campaigns) ? raw.campaigns : [];
+      this.metrics = Array.isArray(raw.metrics) ? raw.metrics : [];
       if (Array.isArray(raw.products) && raw.products.length) Taxonomy.set(raw.products);
     } catch {
       this.records = [];
       this.campaigns = [];
+      this.metrics = [];
     }
   },
   saveCache() {
     try {
       localStorage.setItem(LS_CACHE, JSON.stringify({
         records: this.records, campaigns: this.campaigns, products: Taxonomy.list,
-        savedAt: new Date().toISOString()
+        metrics: this.metrics, savedAt: new Date().toISOString()
       }));
     } catch (e) {
       toast('พื้นที่เก็บในเบราว์เซอร์เต็ม — แนะนำให้เชื่อม Google Sheet');
@@ -731,6 +733,7 @@ const Store = {
       // โหลดหมวดหมู่และแคมเปญก่อน เพราะ record อ้างอิงข้อมูลสองอย่างนี้
       if (Array.isArray(data.products) && data.products.length) Taxonomy.set(data.products);
       this.campaigns = mergeCampaigns(this.campaigns, data.campaigns || []);
+      if (Array.isArray(data.metrics)) this.metrics = data.metrics;
       this.serverVersion = String(data.version || '');
       this.records = (data.records || []).map(normalizeRecord);
       this.rev++;
@@ -751,6 +754,9 @@ const Store = {
 
   /** เวอร์ชัน Code.gs ที่ deploy อยู่จริง — ใช้เตือนเมื่อยังไม่ได้อัปเดต */
   serverVersion: '',
+
+  /** ตัวเลขรายวันจาก Google Ads (ชีต METRICS) — ว่างถ้ายังไม่ได้ตั้งสคริปต์ */
+  metrics: [],
 
   newId() {
     return 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -922,7 +928,7 @@ function normalizeRecord(raw) {
    5. แท็บ
    ───────────────────────────────────────────────────────────── */
 
-const PANELS = ['new', 'timeline', 'dashboard', 'trend', 'budget', 'data'];
+const PANELS = ['new', 'timeline', 'dashboard', 'trend', 'spend', 'budget', 'data'];
 
 function showTab(name) {
   for (const p of PANELS) {
@@ -936,6 +942,7 @@ function showTab(name) {
   if (name === 'timeline') renderTimeline();
   if (name === 'dashboard') renderDashboard();
   if (name === 'trend') renderTrend();
+  if (name === 'spend') renderSpendPage();
   if (name === 'budget') renderBudgetPage();
   if (name === 'data') { renderTaxonomyEditor(); renderConnStatusBox(); }
 }
@@ -2269,6 +2276,14 @@ function statRing(pct) {
   return span;
 }
 
+/** ตัวเลขบนการ์ดสถิติ — ย่อขนาดเองถ้ายาวเกินจนจะตกบรรทัด */
+function statValue(value, unit) {
+  const text = String(value);
+  const len = text.length + (unit ? unit.length : 0);
+  const cls = 'sc-value' + (len > 13 ? ' is-xlong' : len > 9 ? ' is-long' : '');
+  return el('div', { class: cls }, text, unit ? el('small', {}, unit) : null);
+}
+
 function svgIcon(name) {
   const span = el('span', { class: 'sc-icon' });
   span.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${STAT_ICONS[name] || ''}</svg>`;
@@ -2339,7 +2354,7 @@ function renderStatCards() {
     host.append(el('div', { class: `stat-card ${c.cls}${c.active ? ' is-active' : ''}` },
       el('div', { class: 'sc-body' },
         el('div', { class: 'sc-label' }, c.label),
-        el('div', { class: 'sc-value' }, String(c.value), el('small', {}, ' รายการ')),
+        statValue(String(c.value), ' รายการ'),
         el('div', { class: 'sc-sub' }, c.sub)),
       (c.ring !== undefined && c.ring !== null) ? statRing(c.ring) : svgIcon(c.icon)));
   }
@@ -2727,6 +2742,9 @@ const Measure = {
       $('#measureModal').close();
       startMeasurement(c);
     });
+    for (const id of ['#meas_start', '#meas_end']) {
+      $(id)?.addEventListener('change', () => this.renderPull());
+    }
     // Ctrl+Enter ในป๊อปอัพ = บันทึก เหมือนฟอร์มหลัก
     $('#measureModal').addEventListener('keydown', e => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); this.save(); }
@@ -2762,9 +2780,62 @@ const Measure = {
     $('#meas_end').value = $('#meas_date').value;
 
     this.renderBaseline();
+    this.renderPull();
     this.onInput();
     $('#measureModal').showModal();
     setTimeout(() => $('#meas_impressions')?.focus(), 120);
+  },
+
+  /** แถบ "ดึงตัวเลขจาก Google Ads" — โผล่เฉพาะตอนมีข้อมูลของแคมเปญนี้จริง */
+  renderPull() {
+    const host = $('#measPull');
+    if (!host) return;
+    host.innerHTML = '';
+    if (!hasAdsData()) return;
+
+    const from = $('#meas_start').value, to = $('#meas_end').value;
+    const sum = sumAdsRange(this.campaign, from, to);
+    const upTo = adsDataUpTo();
+
+    if (!sum) {
+      host.append(el('div', { class: 'banner' },
+        el('span', { class: 'icon' }, '☁️'),
+        el('span', {}, `ยังไม่มีตัวเลขจาก Google Ads ของช่วงนี้ — ข้อมูลที่ดึงมาแล้วถึงวันที่ ${thaiDate(upTo)}`)));
+      return;
+    }
+
+    const short = to > upTo;
+    host.append(el('div', { class: 'banner good' },
+      el('span', { class: 'icon' }, '☁️'),
+      el('span', {},
+        el('b', {}, `มีตัวเลขจาก Google Ads ${sum.days} วัน `),
+        `(Impr ${fmt(sum.impressions, 0)} · Clicks ${fmt(sum.clicks, 0)} · Cost ${fmt(sum.cost, 2)} ฿ · Conv ${fmt(sum.conversions, 2)})`,
+        short ? el('div', { class: 'card-note', style: 'margin-top:6px' },
+          `ข้อมูลมีถึง ${thaiDate(upTo)} — วันหลังจากนั้นยังไม่ถูกดึงมา ตัวเลขจะไม่ครบช่วง`) : null,
+        el('div', { style: 'margin-top:9px' },
+          el('button', {
+            class: 'btn btn-sm btn-primary', type: 'button', id: 'measPullBtn',
+            onclick: () => this.applyAds(sum)
+          }, 'เติมตัวเลขให้เลย')))));
+  },
+
+  /** เอายอดรวมจาก Google Ads ใส่ช่องกรอก */
+  applyAds(sum) {
+    clearAutoFlags('meas');
+    const put = (key, v) => {
+      const input = $('#meas_' + key);
+      if (!input) return;
+      input.value = v === null || v === undefined ? '' : v;
+    };
+    put('impressions', sum.impressions);
+    put('clicks', sum.clicks);
+    put('cost', sum.cost);
+    put('conversions', sum.conversions);
+    put('ctr', sum.ctr);
+    put('cpc', sum.cpc);
+    if (sum.impr_share !== null) put('impr_share', sum.impr_share);
+    this.onInput();
+    toast(`เติมตัวเลข ${sum.days} วันจาก Google Ads แล้ว — ตรวจดูก่อนกดบันทึก`, 3800);
   },
 
   renderBaseline() {
@@ -2916,8 +2987,461 @@ function openRecordNumbers(rec) {
 }
 
 /* ─────────────────────────────────────────────────────────────
+   10a-5. หน้า "ตัวเลขรายวัน" — Cost / Impr / Clicks / Conversions
+   ข้อมูลมาจากชีต METRICS ที่ Google Ads Script ส่งมาให้ทุกวัน
+   ───────────────────────────────────────────────────────────── */
+
+const SPEND_PRESETS = [
+  { key: '7', label: '7 วัน', days: 7 },
+  { key: '14', label: '14 วัน', days: 14 },
+  { key: '30', label: '30 วัน', days: 30 },
+  { key: '90', label: '90 วัน', days: 90 },
+  { key: 'all', label: 'ทั้งหมด', days: 0 }
+];
+
+/** รวมยอดของชุดแถว แล้วคำนวณอัตราส่วนใหม่จากยอดรวม (ไม่ใช่เฉลี่ยของเฉลี่ย) */
+function spendTotals(rows) {
+  let impressions = 0, clicks = 0, cost = 0, conversions = 0, convValue = 0;
+  for (const m of rows) {
+    impressions += num(m.impressions) || 0;
+    clicks += num(m.clicks) || 0;
+    cost += num(m.cost) || 0;
+    conversions += num(m.conversions) || 0;
+    convValue += num(m.conv_value) || 0;
+  }
+  return {
+    impressions, clicks,
+    cost: round(cost, 2),
+    conversions: round(conversions, 2),
+    conv_value: round(convValue, 2),
+    ctr: impressions ? round(clicks / impressions * 100, 2) : null,
+    cpc: clicks ? round(cost / clicks, 2) : null,
+    cvr: clicks ? round(conversions / clicks * 100, 2) : null,
+    cpa: conversions ? round(cost / conversions, 2) : null
+  };
+}
+
+/** แถว METRICS ที่อยู่ในช่วง + ตรงแคมเปญที่เลือก */
+function spendRows() {
+  const from = $('#spend_from').value, to = $('#spend_to').value;
+  const camp = $('#spendCampaign').value;
+  return (Store.metrics || []).filter(m => {
+    const d = String(m.date || '');
+    if (!d) return false;
+    if (from && d < from) return false;
+    if (to && d > to) return false;
+    if (camp && String(m.campaign || '').trim() !== camp) return false;
+    return true;
+  });
+}
+
+/** ยุบเป็นรายวัน (รวมทุกแคมเปญในวันนั้น) */
+function spendByDay(rows) {
+  const byDate = new Map();
+  for (const m of rows) {
+    const d = String(m.date);
+    if (!byDate.has(d)) byDate.set(d, []);
+    byDate.get(d).push(m);
+  }
+  return [...byDate.entries()]
+    .sort((a, b) => b[0].localeCompare(a[0]))          // ใหม่อยู่บน
+    .map(([date, list]) => ({ date, ...spendTotals(list) }));
+}
+
+function spendByCampaign(rows) {
+  const byName = new Map();
+  for (const m of rows) {
+    const n = String(m.campaign || '').trim();
+    if (!n) continue;
+    if (!byName.has(n)) byName.set(n, []);
+    byName.get(n).push(m);
+  }
+  return [...byName.entries()]
+    .map(([campaign, list]) => ({ campaign, ...spendTotals(list) }))
+    .sort((a, b) => b.cost - a.cost);
+}
+
+function setSpendRange(days) {
+  const upTo = adsDataUpTo() || todayISO();
+  $('#spend_to').value = upTo;
+  if (!days) {
+    let first = upTo;
+    for (const m of Store.metrics || []) {
+      const d = String(m.date || '');
+      if (d && d < first) first = d;
+    }
+    $('#spend_from').value = first;
+  } else {
+    const d = new Date(upTo);
+    d.setDate(d.getDate() - (days - 1));
+    $('#spend_from').value = d.toLocaleDateString('sv-SE');
+  }
+}
+
+function initSpendPage() {
+  const presets = $('#spendPresets');
+  presets.innerHTML = '';
+  for (const p of SPEND_PRESETS) {
+    presets.append(el('button', {
+      type: 'button', class: 'chip', 'data-preset': p.key,
+      'aria-pressed': String(p.key === '30'),
+      onclick: () => {
+        $$('#spendPresets .chip').forEach(c =>
+          c.setAttribute('aria-pressed', String(c.dataset.preset === p.key)));
+        setSpendRange(p.days);
+        renderSpendPage();
+      }
+    }, p.label));
+  }
+  for (const id of ['#spend_from', '#spend_to', '#spendCampaign', '#spendMetric']) {
+    $(id).addEventListener('change', () => {
+      if (id === '#spend_from' || id === '#spend_to') {
+        $$('#spendPresets .chip').forEach(c => c.setAttribute('aria-pressed', 'false'));
+      }
+      renderSpendPage();
+    });
+  }
+  $('#spendCopyDay').addEventListener('click', () => copySpend('day'));
+  $('#spendCopyCamp').addEventListener('click', () => copySpend('campaign'));
+  window.addEventListener('resize', () => {
+    if (!$('#panel-spend').hidden) drawSpendBars();
+  });
+}
+
+function renderSpendPage() {
+  const warn = $('#spendWarn');
+  warn.innerHTML = '';
+
+  if (!hasAdsData()) {
+    warn.append(el('div', { class: 'banner warn' },
+      el('span', { class: 'icon' }, '☁️'),
+      el('span', {},
+        el('b', {}, 'ยังไม่มีตัวเลขจาก Google Ads '),
+        'หน้านี้จะมีข้อมูลเมื่อตั้ง Google Ads Script (ไฟล์ DailyMetrics.js) ให้รันวันละครั้งแล้ว — ดูขั้นตอนใน README')));
+    $('#spendStats').innerHTML = '';
+    $('#spendCampTable').querySelector('tbody').innerHTML = '';
+    $('#spendCampTable').querySelector('tfoot').innerHTML = '';
+    $('#spendDayTable').querySelector('tbody').innerHTML = '';
+    $('#spendDayTable').querySelector('tfoot').innerHTML = '';
+    $('#spendChart').innerHTML = '';
+    return;
+  }
+
+  // ตั้งช่วงเริ่มต้นครั้งแรกที่เข้ามา
+  if (!$('#spend_from').value || !$('#spend_to').value) setSpendRange(30);
+  fillSelect($('#spendCampaign'), adsCampaignNames().sort(), 'ทุกแคมเปญ (ยอดรวม)');
+
+  const upTo = adsDataUpTo();
+  warn.append(el('div', { class: 'banner good' },
+    el('span', { class: 'icon' }, '☁️'),
+    el('span', {}, `ตัวเลขจาก Google Ads · ข้อมูลล่าสุดถึงวันที่ ${thaiDate(upTo)} (${relativeDay(upTo)})`)));
+
+  const rows = spendRows();
+  const days = spendByDay(rows);
+  const camps = spendByCampaign(rows);
+  const total = spendTotals(rows);
+  const only = $('#spendCampaign').value;
+
+  // ── การ์ดสรุป
+  const stats = $('#spendStats');
+  stats.innerHTML = '';
+  const cards = [
+    { cls: 'c3', icon: 'edit', label: 'Cost รวม', value: fmt(total.cost, 2), unit: ' ฿',
+      active: true, sub: days.length ? `เฉลี่ย ${fmt(total.cost / days.length, 2)} ฿/วัน` : '—' },
+    { cls: 'c1', icon: 'clock', label: 'Impressions', value: fmt(total.impressions, 0), unit: '',
+      sub: `Clicks ${fmt(total.clicks, 0)} · CTR ${total.ctr === null ? '—' : fmt(total.ctr, 2) + '%'}` },
+    { cls: 'c4', icon: 'up', label: 'Conversions', value: fmt(total.conversions, 2), unit: '',
+      sub: total.cvr === null ? 'ยังไม่มีคลิก' : `CVR ${fmt(total.cvr, 2)}%` },
+    { cls: 'c2', icon: 'down', label: 'CPA', value: total.cpa === null ? '—' : fmt(total.cpa, 2),
+      unit: total.cpa === null ? '' : ' ฿',
+      sub: total.cpc === null ? '—' : `CPC เฉลี่ย ${fmt(total.cpc, 2)} ฿` }
+  ];
+  for (const c of cards) {
+    stats.append(el('div', { class: `stat-card ${c.cls}${c.active ? ' is-active' : ''}` },
+      el('div', { class: 'sc-body' },
+        el('div', { class: 'sc-label' }, c.label),
+        statValue(c.value, c.unit),
+        el('div', { class: 'sc-sub' }, c.sub)),
+      svgIcon(c.icon)));
+  }
+
+  const metric = $('#spendMetric').value;
+  const METRIC_LABEL = { cost: 'Cost', impressions: 'Impressions', clicks: 'Clicks', conversions: 'Conversions' };
+  $('#spendChartTitle').textContent = `${METRIC_LABEL[metric]} รายวัน`;
+  $('#spendChartNote').textContent = only
+    ? `${only} · ${days.length} วัน`
+    : `รวมทุกแคมเปญ · ${days.length} วัน · ${camps.length} แคมเปญ`;
+  drawSpendBars();
+
+  // ── ตารางรายแคมเปญ
+  const cTb = $('#spendCampTable').querySelector('tbody');
+  const cTf = $('#spendCampTable').querySelector('tfoot');
+  cTb.innerHTML = ''; cTf.innerHTML = '';
+  if (!camps.length) {
+    cTb.append(el('tr', {}, el('td', { colspan: '9' },
+      el('div', { class: 'empty' }, el('strong', {}, 'ไม่มีข้อมูลในช่วงนี้'), 'ลองขยายช่วงเวลา'))));
+  } else {
+    for (const c of camps) {
+      cTb.append(el('tr', {},
+        el('td', { class: 'table-left' }, el('b', {}, c.campaign)),
+        el('td', { class: 'num' }, fmt(c.impressions, 0)),
+        el('td', { class: 'num' }, fmt(c.clicks, 0)),
+        el('td', { class: 'num val-strong' }, fmt(c.cost, 2)),
+        el('td', { class: 'num' }, fmt(c.conversions, 2)),
+        el('td', { class: 'num' }, c.ctr === null ? '—' : fmt(c.ctr, 2) + '%'),
+        el('td', { class: 'num' }, c.cpc === null ? '—' : fmt(c.cpc, 2)),
+        el('td', { class: 'num' }, c.cpa === null ? '—' : fmt(c.cpa, 2)),
+        el('td', { class: 'num' }, total.cost ? fmt(c.cost / total.cost * 100, 1) + '%' : '—')));
+    }
+    cTf.append(el('tr', { class: 'row-total' },
+      el('td', { class: 'table-left' }, 'รวมทั้งหมด'),
+      el('td', { class: 'num' }, fmt(total.impressions, 0)),
+      el('td', { class: 'num' }, fmt(total.clicks, 0)),
+      el('td', { class: 'num' }, fmt(total.cost, 2)),
+      el('td', { class: 'num' }, fmt(total.conversions, 2)),
+      el('td', { class: 'num' }, total.ctr === null ? '—' : fmt(total.ctr, 2) + '%'),
+      el('td', { class: 'num' }, total.cpc === null ? '—' : fmt(total.cpc, 2)),
+      el('td', { class: 'num' }, total.cpa === null ? '—' : fmt(total.cpa, 2)),
+      el('td', { class: 'num' }, '100%')));
+  }
+
+  // ── ตารางรายวัน
+  const dTb = $('#spendDayTable').querySelector('tbody');
+  const dTf = $('#spendDayTable').querySelector('tfoot');
+  dTb.innerHTML = ''; dTf.innerHTML = '';
+  $('#spendDayNote').textContent = only ? only : 'รวมทุกแคมเปญ';
+  if (!days.length) {
+    dTb.append(el('tr', {}, el('td', { colspan: '8' },
+      el('div', { class: 'empty' }, el('strong', {}, 'ไม่มีข้อมูลในช่วงนี้'), 'ลองขยายช่วงเวลา'))));
+  } else {
+    for (const dRow of days) {
+      dTb.append(el('tr', {},
+        el('td', { class: 'table-left' }, thaiDate(dRow.date),
+          el('span', { class: 'card-note', style: 'margin-left:8px' }, relativeDay(dRow.date))),
+        el('td', { class: 'num' }, fmt(dRow.impressions, 0)),
+        el('td', { class: 'num' }, fmt(dRow.clicks, 0)),
+        el('td', { class: 'num val-strong' }, fmt(dRow.cost, 2)),
+        el('td', { class: 'num' }, fmt(dRow.conversions, 2)),
+        el('td', { class: 'num' }, dRow.ctr === null ? '—' : fmt(dRow.ctr, 2) + '%'),
+        el('td', { class: 'num' }, dRow.cpc === null ? '—' : fmt(dRow.cpc, 2)),
+        el('td', { class: 'num' }, dRow.cpa === null ? '—' : fmt(dRow.cpa, 2))));
+    }
+    dTf.append(el('tr', { class: 'row-total' },
+      el('td', { class: 'table-left' }, `รวม ${days.length} วัน`),
+      el('td', { class: 'num' }, fmt(total.impressions, 0)),
+      el('td', { class: 'num' }, fmt(total.clicks, 0)),
+      el('td', { class: 'num' }, fmt(total.cost, 2)),
+      el('td', { class: 'num' }, fmt(total.conversions, 2)),
+      el('td', { class: 'num' }, total.ctr === null ? '—' : fmt(total.ctr, 2) + '%'),
+      el('td', { class: 'num' }, total.cpc === null ? '—' : fmt(total.cpc, 2)),
+      el('td', { class: 'num' }, total.cpa === null ? '—' : fmt(total.cpa, 2))));
+  }
+}
+
+/** กราฟแท่งรายวัน — แท่งเดียวต่อวัน ตัวชี้วัดตามที่เลือก */
+function drawSpendBars() {
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = $('#spendChart');
+  const shell = $('#spendShell');
+  const tooltip = $('#spendTooltip');
+  if (!svg || !shell) return;
+  svg.innerHTML = '';
+  tooltip.hidden = true;
+
+  const mk = (tag, attrs = {}, text) => {
+    const n = document.createElementNS(NS, tag);
+    for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+    if (text !== undefined) n.textContent = text;
+    return n;
+  };
+
+  const metric = $('#spendMetric').value;
+  const dec = metric === 'cost' ? 2 : metric === 'conversions' ? 2 : 0;
+  const days = spendByDay(spendRows()).slice().reverse();   // เก่า → ใหม่ ตามแกนเวลา
+  const width = Math.max(320, shell.clientWidth || 720);
+
+  if (!days.length) {
+    svg.setAttribute('width', width);
+    svg.setAttribute('height', 90);
+    svg.setAttribute('viewBox', `0 0 ${width} 90`);
+    svg.append(mk('text', { x: width / 2, y: 48, 'text-anchor': 'middle' }, 'ไม่มีข้อมูลในช่วงนี้'));
+    return;
+  }
+
+  const M = { top: 14, right: 16, bottom: 34, left: 62 };
+  const height = 260;
+  const W = width - M.left - M.right;
+  const H = height - M.top - M.bottom;
+  svg.setAttribute('width', width);
+  svg.setAttribute('height', height);
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+
+  const vals = days.map(d => Number(d[metric]) || 0);
+  const max = Math.max(...vals, 1);
+  const ticks = niceTicks(0, max, 4);
+  const top = ticks[ticks.length - 1] || max;
+  const y = v => M.top + H - (v / top) * H;
+
+  for (const t of ticks) {
+    svg.append(mk('line', {
+      x1: M.left, x2: M.left + W, y1: y(t), y2: y(t),
+      stroke: cssVar('--gridline'), 'stroke-width': 1
+    }));
+    svg.append(mk('text', {
+      x: M.left - 9, y: y(t) + 4, 'text-anchor': 'end',
+      fill: cssVar('--text-muted'), 'font-size': 11
+    }, fmt(t, t >= 1000 ? 0 : dec)));
+  }
+
+  const slot = W / days.length;
+  const bw = Math.max(2, Math.min(34, slot * 0.68));
+  const accent = cssVar('--accent');
+
+  days.forEach((d, i) => {
+    const v = Number(d[metric]) || 0;
+    const cx = M.left + slot * i + slot / 2;
+    const h = Math.max(v > 0 ? 1.5 : 0, M.top + H - y(v));
+    const bar = mk('rect', {
+      x: cx - bw / 2, y: y(v), width: bw, height: h,
+      rx: Math.min(4, bw / 2), fill: accent, opacity: 0.88
+    });
+    bar.addEventListener('mouseenter', e => {
+      bar.setAttribute('opacity', '1');
+      tooltip.hidden = false;
+      tooltip.innerHTML =
+        `<b>${esc(thaiDate(d.date))}</b><br>` +
+        `Impr ${esc(fmt(d.impressions, 0))} · Clicks ${esc(fmt(d.clicks, 0))}<br>` +
+        `Cost ${esc(fmt(d.cost, 2))} ฿ · Conv ${esc(fmt(d.conversions, 2))}<br>` +
+        `CTR ${d.ctr === null ? '—' : esc(fmt(d.ctr, 2)) + '%'} · ` +
+        `CPC ${d.cpc === null ? '—' : esc(fmt(d.cpc, 2))} · ` +
+        `CPA ${d.cpa === null ? '—' : esc(fmt(d.cpa, 2))}`;
+      const r = shell.getBoundingClientRect();
+      tooltip.style.left = Math.min(Math.max(e.clientX - r.left + 12, 8), r.width - 210) + 'px';
+      tooltip.style.top = Math.max(e.clientY - r.top - 10, 8) + 'px';
+    });
+    bar.addEventListener('mouseleave', () => {
+      bar.setAttribute('opacity', '0.88');
+      tooltip.hidden = true;
+    });
+    svg.append(bar);
+
+    // ป้ายวันที่ — เว้นระยะไม่ให้ตัวหนังสือทับกัน
+    const every = Math.max(1, Math.ceil(days.length / (W / 58)));
+    if (i % every === 0 || i === days.length - 1) {
+      const dt = parseDate(d.date);
+      svg.append(mk('text', {
+        x: cx, y: height - 12, 'text-anchor': 'middle',
+        fill: cssVar('--text-muted'), 'font-size': 11
+      }, dt ? `${dt.getDate()}/${dt.getMonth() + 1}` : d.date));
+    }
+  });
+
+  svg.append(mk('line', {
+    x1: M.left, x2: M.left + W, y1: M.top + H, y2: M.top + H,
+    stroke: cssVar('--baseline'), 'stroke-width': 1
+  }));
+}
+
+function copySpend(kind) {
+  const rows = spendRows();
+  const total = spendTotals(rows);
+  const lines = [];
+  if (kind === 'day') {
+    lines.push('วันที่\tImpr\tClicks\tCost\tConv\tCTR\tCPC\tCPA');
+    for (const d of spendByDay(rows)) {
+      lines.push([d.date, d.impressions, d.clicks, d.cost, d.conversions,
+        d.ctr ?? '', d.cpc ?? '', d.cpa ?? ''].join('\t'));
+    }
+  } else {
+    lines.push('แคมเปญ\tImpr\tClicks\tCost\tConv\tCTR\tCPC\tCPA');
+    for (const c of spendByCampaign(rows)) {
+      lines.push([c.campaign, c.impressions, c.clicks, c.cost, c.conversions,
+        c.ctr ?? '', c.cpc ?? '', c.cpa ?? ''].join('\t'));
+    }
+  }
+  lines.push(['รวม', total.impressions, total.clicks, total.cost, total.conversions,
+    total.ctr ?? '', total.cpc ?? '', total.cpa ?? ''].join('\t'));
+
+  navigator.clipboard.writeText(lines.join('\n'))
+    .then(() => toast('คัดลอกแล้ว วางในชีตได้เลย'))
+    .catch(() => toast('คัดลอกไม่สำเร็จ'));
+}
+
+/* ─────────────────────────────────────────────────────────────
    10a-4. หน้า งบ & Bid ปัจจุบัน
    ───────────────────────────────────────────────────────────── */
+
+/* ─────────────────────────────────────────────────────────────
+   ตัวเลขรายวันจาก Google Ads (ชีต METRICS)
+   ───────────────────────────────────────────────────────────── */
+
+function hasAdsData() { return Array.isArray(Store.metrics) && Store.metrics.length > 0; }
+
+/** วันล่าสุดที่มีข้อมูล — ใช้บอกความสดของข้อมูล */
+function adsDataUpTo() {
+  let latest = '';
+  for (const m of Store.metrics || []) {
+    const d = String(m.date || '');
+    if (d > latest) latest = d;
+  }
+  return latest;
+}
+
+/** แถวล่าสุดของแคมเปญหนึ่ง (งบ/สถานะ/bid strategy ปัจจุบัน) */
+function latestAdsRow(campaign) {
+  let best = null;
+  for (const m of Store.metrics || []) {
+    if (String(m.campaign || '').trim() !== campaign) continue;
+    if (!best || String(m.date) > String(best.date)) best = m;
+  }
+  return best;
+}
+
+function adsCampaignNames() {
+  const set = new Set();
+  for (const m of Store.metrics || []) {
+    const n = String(m.campaign || '').trim();
+    if (n) set.add(n);
+  }
+  return [...set];
+}
+
+/**
+ * รวมตัวเลขของแคมเปญหนึ่งในช่วงวันที่ (รวมวันแรกและวันสุดท้าย)
+ * ยอดสะสมบวกตรง ๆ ส่วนอัตราส่วนคำนวณใหม่จากยอดรวม ไม่ใช่เอาค่าเฉลี่ยมาเฉลี่ยซ้ำ
+ */
+function sumAdsRange(campaign, from, to) {
+  if (!from || !to) return null;
+  let impressions = 0, clicks = 0, cost = 0, conversions = 0, convValue = 0;
+  let isSum = 0, isDays = 0, days = 0;
+
+  for (const m of Store.metrics || []) {
+    if (String(m.campaign || '').trim() !== campaign) continue;
+    const d = String(m.date || '');
+    if (d < from || d > to) continue;
+    days++;
+    impressions += num(m.impressions) || 0;
+    clicks += num(m.clicks) || 0;
+    cost += num(m.cost) || 0;
+    conversions += num(m.conversions) || 0;
+    convValue += num(m.conv_value) || 0;
+    const is = num(m.impr_share);
+    if (is !== null) { isSum += is; isDays++; }
+  }
+  if (!days) return null;
+
+  return {
+    days, impressions, clicks,
+    cost: round(cost, 2),
+    conversions: round(conversions, 2),
+    conv_value: round(convValue, 2),
+    ctr: impressions ? round(clicks / impressions * 100, 2) : null,
+    cpc: clicks ? round(cost / clicks, 2) : null,
+    cvr: clicks ? round(conversions / clicks * 100, 2) : null,
+    cpa: conversions ? round(cost / conversions, 2) : null,
+    impr_share: isDays ? round(isSum / isDays, 2) : null
+  };
+}
 
 /**
  * ค่างบ/bid ที่ตั้งไว้ตอนนี้ของแคมเปญ
@@ -2925,6 +3449,13 @@ function openRecordNumbers(rec) {
  * ตอนเวอร์ชันก่อน (ตอนนั้นค่าถูกเก็บติดไปกับบันทึกรายวัน)
  */
 function latestSetting(campaign, key) {
+  // งบมาจาก Google Ads ตรง ๆ ถือว่าแม่นกว่าที่กรอกมือเสมอ
+  const ads = latestAdsRow(campaign);
+  if (ads) {
+    const fromAds = num(ads[key === 'bid' ? 'max_cpc' : key]);
+    if (fromAds !== null) return { value: fromAds, date: String(ads.date || ''), fromAds: true };
+  }
+
   const meta = Store.campaign(campaign);
   const v = meta ? num(meta[key]) : null;
   if (v !== null) return { value: v, date: meta.settings_updated || '', legacy: false };
@@ -2940,18 +3471,30 @@ function latestSetting(campaign, key) {
 function budgetRows() {
   const names = new Set(Store.records.map(r => r.campaign).filter(Boolean));
   for (const c of Store.campaigns) if (c.name) names.add(c.name);
+  for (const n of adsCampaignNames()) names.add(n);      // แคมเปญที่ยังไม่เคยจดก็ต้องเห็น
 
   const out = [];
   for (const name of names) {
     const recs = Store.sorted().filter(r => r.campaign === name);
-    const measured = recs.find(r => isMeasured(r));
-    const cpc = measured ? num(solveBlock(block(measured, 'before')).values.cpc) : null;
+    const ads = latestAdsRow(name);
+    // CPC จริง: ใช้ของ 7 วันล่าสุดจาก Google Ads ถ้ามี ไม่งั้นย้อนไปดูตัวเลขที่จดไว้
+    let cpc = null;
+    if (ads) {
+      const week = sumAdsRange(name, isoOffset(-7), adsDataUpTo());
+      cpc = week ? week.cpc : num(ads.avg_cpc);
+    }
+    if (cpc === null) {
+      const measured = recs.find(r => isMeasured(r));
+      cpc = measured ? num(solveBlock(block(measured, 'before')).values.cpc) : null;
+    }
     out.push({
       campaign: name,
       product: recs.length ? recProduct(recs[0]) : (Store.campaign(name)?.product || ''),
       group: recs.length ? recGroup(recs[0]) : '',
       budget: latestSetting(name, 'budget'),
       bid: latestSetting(name, 'bid'),
+      status: ads ? String(ads.status || '') : '',
+      strategy: ads ? String(ads.bid_strategy || '') : '',
       cpc,
       lastTouch: recs[0]?.date || ''
     });
@@ -2975,6 +3518,19 @@ function renderBudgetWarning() {
         ' — เปิดจากเครื่องอื่นจะไม่เห็น',
         el('div', { style: 'margin-top:8px' },
           'วิธีแก้: เปิด Apps Script > วาง Code.gs ใหม่ทับ > Deploy › Manage deployments › ✏️ › New version › Deploy'))));
+  }
+
+  if (hasAdsData()) {
+    const upTo = adsDataUpTo();
+    const lag = daysBetween(upTo, todayISO());
+    const behind = lag !== null && lag > 2;      // daysBetween นับรวมวันแรก/วันสุดท้าย
+    host.append(el('div', { class: `banner ${behind ? 'warn' : 'good'}` },
+      el('span', { class: 'icon' }, '☁️'),
+      el('span', {},
+        el('b', {}, 'ต่อกับ Google Ads แล้ว '),
+        `— ตัวเลขงบ สถานะ และ CPC ดึงมาเอง ข้อมูลล่าสุดถึงวันที่ ${thaiDate(upTo)} (${relativeDay(upTo)})`,
+        behind ? el('div', { class: 'card-note', style: 'margin-top:6px' },
+          'ข้อมูลไม่อัปเดตมา 2 วันแล้ว — ลองเช็กที่ Google Ads > Tools > Bulk actions > Scripts ว่าสคริปต์รันผ่านไหม') : null)));
   }
 
   // มีค่าที่ยังค้างอยู่ในบันทึกเก่า ยังไม่ได้ย้ายมาเก็บกับแคมเปญ
@@ -3048,7 +3604,7 @@ function renderBudgetPage() {
     stats.append(el('div', { class: `stat-card ${c.cls}${c.active ? ' is-active' : ''}` },
       el('div', { class: 'sc-body' },
         el('div', { class: 'sc-label' }, c.label),
-        el('div', { class: 'sc-value' }, c.value, c.unit ? el('small', {}, c.unit) : null),
+        statValue(c.value, c.unit),
         el('div', { class: 'sc-sub' }, c.sub)),
       (c.ring !== undefined && c.ring !== null) ? statRing(c.ring) : svgIcon(c.icon)));
   }
@@ -3065,9 +3621,10 @@ function renderBudgetPage() {
 
   const today = todayISO();
   for (const r of rows) {
+    const auto = !!(r.budget?.fromAds || r.bid?.fromAds);
     const oldest = [r.budget?.date, r.bid?.date].filter(Boolean).sort()[0];
     const age = oldest ? daysBetween(oldest, today) : null;
-    const stale = age !== null && age > 30;
+    const stale = !auto && age !== null && age > 30;
     const overBid = r.bid && r.cpc !== null && r.cpc > r.bid.value * 1.05;
 
     const cell = (setting, dec, unit) => setting
@@ -3076,6 +3633,11 @@ function renderBudgetPage() {
     const when = setting => {
       if (!setting) return el('td', { class: 'val-none' }, 'ยังไม่เคยตั้ง');
       if (!setting.date) return el('td', { class: 'val-none' }, 'ไม่ทราบวันที่');
+      if (setting.fromAds) {
+        return el('td', {}, el('span', {
+          class: 'src-ads', title: `ดึงจาก Google Ads ข้อมูลถึง ${thaiDate(setting.date)}`
+        }, 'จาก Google Ads'));
+      }
       return el('td', {}, el('span', {
         class: `stale${stale ? ' is-old' : ''}`,
         title: setting.legacy ? 'ค่านี้มาจากบันทึกเก่า — กด "ตั้งค่า" หนึ่งครั้งเพื่อย้ายมาเก็บกับแคมเปญ' : ''
@@ -4430,6 +4992,7 @@ function refreshAll() {
   if (!$('#panel-timeline').hidden) renderTimeline();
   if (!$('#panel-dashboard').hidden) renderDashboard();
   if (!$('#panel-trend').hidden) renderTrend();
+  if (!$('#panel-spend').hidden) renderSpendPage();
   if (!$('#panel-budget').hidden) renderBudgetPage();
 }
 
@@ -4490,8 +5053,8 @@ function initShortcuts(help) {
     if (e.key === 't' || e.key === 'T') {
       e.preventDefault(); $('#dailyDate').value = todayISO(); showTab('dashboard'); return;
     }
-    // 1-6 = สลับแท็บ
-    const idx = ['1', '2', '3', '4', '5', '6'].indexOf(e.key);
+    // 1-7 = สลับแท็บ
+    const idx = ['1', '2', '3', '4', '5', '6', '7'].indexOf(e.key);
     if (idx >= 0) { e.preventDefault(); showTab(PANELS[idx]); }
   });
 }
@@ -4523,6 +5086,7 @@ async function boot() {
   initImport();
   initSettings();
   initDailyCard();
+  initSpendPage();
   initBudgetPage();
   initSidebar();
   initTablistKeys();
