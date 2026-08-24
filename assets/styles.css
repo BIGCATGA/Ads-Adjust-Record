@@ -868,6 +868,44 @@ table.data select { min-height: 32px; padding: 4px 28px 4px 9px; font-size: 0.82
 .table-wrap.scroll-md { max-height: 330px; overflow-y: auto; }
 .table-wrap.scroll-lg { max-height: 520px; overflow-y: auto; }
 
+/* ── ตารางแคมเปญ × วัน — วันละกล่องพับได้ ─────────────────── */
+
+.cd-day {
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  margin-bottom: 10px;
+  background: var(--surface-1);
+  overflow: hidden;
+}
+.cd-day > summary {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 12px 15px; cursor: pointer;
+  background: var(--surface-2);
+  list-style: none; font-size: 0.84rem;
+}
+.cd-day > summary::-webkit-details-marker { display: none; }
+.cd-day > summary::before {
+  content: '▸'; color: var(--text-muted); flex: none;
+  transition: transform 0.15s var(--ease);
+}
+.cd-day[open] > summary::before { transform: rotate(90deg); }
+.cd-day[open] > summary { border-bottom: 1px solid var(--border); }
+.cd-day .cd-date { font-weight: 500; color: var(--text-primary); }
+.cd-day .cd-rel { font-size: 0.76rem; color: var(--text-muted); font-weight: 300; }
+.cd-day .cd-sum {
+  font-size: 0.78rem; color: var(--text-secondary); font-weight: 300;
+  margin-left: auto; text-align: right;
+}
+.cd-day .cd-count {
+  font-size: 0.72rem; color: var(--accent);
+  background: var(--accent-soft); border-radius: 999px; padding: 2px 10px; flex: none;
+}
+.cd-day .table-wrap { padding: 0 4px 4px; }
+
+@media (max-width: 640px) {
+  .cd-day .cd-sum { margin-left: 0; flex-basis: 100%; text-align: left; }
+}
+
 /* หัวตารางลอยไว้ตอนเลื่อนดูรายวันยาว ๆ */
 .table-wrap.scroll-lg thead th {
   position: sticky; top: 0; z-index: 2;

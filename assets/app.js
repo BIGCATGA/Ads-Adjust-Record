@@ -8,24 +8,29 @@
    1. ค่าคงที่
    ───────────────────────────────────────────────────────────── */
 
-const APP_VERSION = '1.13.0';
+const APP_VERSION = '1.15.0';
 const LS_CONFIG = 'aar.config.v1';
 
 /* ═══════════════════════════════════════════════════════════════
-   การเชื่อมต่อ Google Sheet ที่ฝังมากับตัวเว็บ
-   ใครเปิดลิงก์นี้ก็ต่อชีตเดียวกันได้ทันที ไม่ต้องกรอกอะไร
+   การเชื่อมต่อ
 
-   ⚠️  URL ต้องลงท้ายด้วย /exec เท่านั้น
-       /dev = เวอร์ชันทดสอบ ใช้ได้เฉพาะเจ้าของสคริปต์ที่ล็อกอินอยู่
-       เอา /exec มาจาก Apps Script → Deploy → Manage deployments
+   เว็บนี้ยิงผ่าน "ตัวกลาง" ที่ /api/sheet ซึ่งเป็น Cloudflare Pages Function
+   token กับ URL ของชีตเก็บเป็น environment variable ฝั่งเซิร์ฟเวอร์
+   ไม่มีความลับอยู่ในไฟล์นี้เลย — เปิด DevTools ดูก็ไม่เจอ
 
-   ⚠️  รหัสนี้อยู่ในโค้ดที่เปิดดูได้จากหน้าเว็บ ใครมีลิงก์ = แก้ข้อมูลในชีตได้
-       ถ้าอยากเปลี่ยน: แก้ที่นี่ + แก้ API_TOKEN ใน Code.gs ให้ตรงกัน แล้ว Deploy ใหม่
+   ตัวกลางอยู่ที่ cloudflare/functions/api/sheet.js (ดูขั้นตอนตั้งใน README)
+
+   ถ้ายังไม่ได้ย้ายไป Cloudflare: ไปหน้าตั้งค่า กรอก URL /exec กับ token เอง
+   ค่าที่กรอกจะเก็บอยู่ในเบราว์เซอร์เครื่องนี้เท่านั้น ไม่ขึ้น repo
    ═══════════════════════════════════════════════════════════════ */
+const PROXY_PATH = '/api/sheet';
 const DEFAULT_CONFIG = {
-  url: 'https://script.google.com/macros/s/AKfycbzCRjbteV9eVQnOaCECKpKbuTlrhHjBA3YQ7MQqO0IEVImMMn8ADPykWU-4Y1iLWk89/exec',
-  token: 'my-secret-key-Ads-Adjust-Record-bigcat-19082026'
+  url: PROXY_PATH,
+  token: ''          // ตัวกลางเติมให้ฝั่งเซิร์ฟเวอร์ ไม่ต้องมีตรงนี้
 };
+
+/** URL นี้เป็นตัวกลางของเราเองหรือเปล่า (เส้นทางแบบ relative) */
+const isProxyUrl = u => String(u || '').startsWith('/');
 const LS_CACHE = 'aar.records.v1';
 
 /** ตัวชี้วัดทั้งหมด
@@ -551,7 +556,7 @@ const Store = {
     if (saved.offline) {                       // ผู้ใช้เลือกใช้แบบออฟไลน์ไว้เอง
       this.config = { url: '', token: '' };
       this.usingDefault = false;
-    } else if (saved.url) {                    // ผู้ใช้กรอกค่าของตัวเองไว้ — ใช้ของเขา
+    } else if (saved.url && !isProxyUrl(saved.url)) {   // ผู้ใช้กรอกค่าของตัวเองไว้ — ใช้ของเขา
       this.config = { url: saved.url, token: saved.token || '' };
       this.usingDefault = false;
     } else {                                   // ไม่มีอะไรเก็บไว้ — ใช้ค่าที่ฝังในโค้ด ต่อได้ทันที
@@ -580,7 +585,8 @@ const Store = {
   },
 
   get configured() {
-    return /\/(exec|dev)\b/.test(this.config.url || '');
+    const u = this.config.url || '';
+    return isProxyUrl(u) || /\/(exec|dev)\b/.test(u);
   },
 
   /** URL แบบ /dev ใช้ได้เฉพาะเจ้าของสคริปต์ที่ล็อกอินอยู่ — คนอื่นเปิดจะไม่ผ่าน */
@@ -656,7 +662,10 @@ const Store = {
 
   /** ยิงคำสั่งเดียว ไม่ retry — ใช้ภายใน call() */
   async callOnce(action, payload, timeoutMs) {
-    const body = JSON.stringify({ action, token: this.config.token, ...payload });
+    // ผ่านตัวกลาง = ไม่ต้องแนบ token ฝั่งเซิร์ฟเวอร์เติมให้เอง
+    const body = isProxyUrl(this.config.url)
+      ? JSON.stringify({ action, ...payload })
+      : JSON.stringify({ action, token: this.config.token, ...payload });
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), timeoutMs);
     let res;
@@ -684,7 +693,14 @@ const Store = {
     }
 
     if (!res.ok) {
-      const e = new Error(`Google ตอบกลับรหัส HTTP ${res.status}`);
+      // 404 ที่ตัวกลาง = ยังไม่ได้ deploy function ตัวนี้ (มักเพราะยังอยู่บน GitHub Pages)
+      if (isProxyUrl(this.config.url) && res.status === 404) {
+        const e = new Error('ยังไม่พบตัวกลางที่ /api/sheet — เว็บนี้ยังไม่ได้อยู่บน Cloudflare Pages ' +
+          'หรือยังไม่ได้อัปโฟลเดอร์ functions/ ขึ้นไป');
+        e.proxyMissing = true;
+        throw e;
+      }
+      const e = new Error(`เซิร์ฟเวอร์ตอบกลับรหัส HTTP ${res.status}`);
       e.retryable = res.status >= 500;
       throw e;
     }
@@ -3102,6 +3118,13 @@ function initSpendPage() {
     });
   }
   $('#spendCopyDay').addEventListener('click', () => copySpend('day'));
+  $('#spendCopyCd').addEventListener('click', () => copySpend('campaignDay'));
+  $('#spendCdExpand').addEventListener('click', e => {
+    const boxes = $$('#spendCdList .cd-day');
+    const openAll = boxes.some(b => !b.open);
+    boxes.forEach(b => { b.open = openAll; });
+    e.currentTarget.textContent = openAll ? 'พับทุกวัน' : 'กางทุกวัน';
+  });
   $('#spendCopyCamp').addEventListener('click', () => copySpend('campaign'));
   window.addEventListener('resize', () => {
     if (!$('#panel-spend').hidden) drawSpendBars();
@@ -3124,6 +3147,7 @@ function renderSpendPage() {
     $('#spendDayTable').querySelector('tbody').innerHTML = '';
     $('#spendDayTable').querySelector('tfoot').innerHTML = '';
     $('#spendChart').innerHTML = '';
+    $('#spendCdList').innerHTML = '';
     return;
   }
 
@@ -3167,6 +3191,7 @@ function renderSpendPage() {
 
   const metric = $('#spendMetric').value;
   const METRIC_LABEL = { cost: 'Cost', impressions: 'Impressions', clicks: 'Clicks', conversions: 'Conversions' };
+  renderCampaignDay();
   $('#spendChartTitle').textContent = `${METRIC_LABEL[metric]} รายวัน`;
   $('#spendChartNote').textContent = only
     ? `${only} · ${days.length} วัน`
@@ -3236,6 +3261,82 @@ function renderSpendPage() {
       el('td', { class: 'num' }, total.cpc === null ? '—' : fmt(total.cpc, 2)),
       el('td', { class: 'num' }, total.cpa === null ? '—' : fmt(total.cpa, 2))));
   }
+}
+
+/**
+ * ตารางรายแคมเปญแยกตามวัน — วันละหนึ่งกล่องพับได้
+ * ยุบเป็น <details> เพราะ 18 แคมเปญ × 30 วัน = 540 แถว ถ้ากางหมดจะอ่านไม่ไหว
+ */
+function renderCampaignDay() {
+  const host = $('#spendCdList');
+  if (!host) return;
+  host.innerHTML = '';
+
+  const rows = spendRows();
+  if (!rows.length) {
+    host.append(el('div', { class: 'empty' },
+      el('strong', {}, 'ไม่มีข้อมูลในช่วงนี้'), 'ลองขยายช่วงเวลา'));
+    return;
+  }
+
+  const byDate = new Map();
+  for (const m of rows) {
+    const d = String(m.date);
+    if (!byDate.has(d)) byDate.set(d, []);
+    byDate.get(d).push(m);
+  }
+  const dates = [...byDate.keys()].sort((a, b) => b.localeCompare(a));   // ใหม่อยู่บน
+
+  dates.forEach((date, i) => {
+    const list = byDate.get(date);
+    const dayTotal = spendTotals(list);
+    const camps = list
+      .map(m => ({ campaign: String(m.campaign || '').trim(), ...spendTotals([m]) }))
+      .sort((a, b) => b.cost - a.cost);
+
+    const box = el('details', { class: 'cd-day', open: i === 0 || null });
+    box.append(el('summary', {},
+      el('span', { class: 'cd-date' }, thaiDate(date)),
+      el('span', { class: 'cd-rel' }, relativeDay(date)),
+      el('span', { class: 'cd-sum' },
+        `Cost ${fmt(dayTotal.cost, 2)} ฿ · Impr ${fmt(dayTotal.impressions, 0)} · ` +
+        `Clicks ${fmt(dayTotal.clicks, 0)} · Conv ${fmt(dayTotal.conversions, 2)}`),
+      el('span', { class: 'cd-count' }, `${camps.length} แคมเปญ`)));
+
+    const tb = el('tbody');
+    for (const c of camps) {
+      tb.append(el('tr', {},
+        el('td', { class: 'table-left' }, c.campaign),
+        el('td', { class: 'num' }, fmt(c.impressions, 0)),
+        el('td', { class: 'num' }, fmt(c.clicks, 0)),
+        el('td', { class: 'num val-strong' }, fmt(c.cost, 2)),
+        el('td', { class: 'num' }, fmt(c.conversions, 2)),
+        el('td', { class: 'num' }, c.ctr === null ? '—' : fmt(c.ctr, 2) + '%'),
+        el('td', { class: 'num' }, c.cpc === null ? '—' : fmt(c.cpc, 2)),
+        el('td', { class: 'num' }, c.cpa === null ? '—' : fmt(c.cpa, 2))));
+    }
+
+    box.append(el('div', { class: 'table-wrap' },
+      el('table', { class: 'data' },
+        el('thead', {}, el('tr', {},
+          el('th', { class: 'table-left' }, 'แคมเปญ'),
+          el('th', { class: 'num' }, 'Impr'), el('th', { class: 'num' }, 'Clicks'),
+          el('th', { class: 'num' }, 'Cost'), el('th', { class: 'num' }, 'Conv'),
+          el('th', { class: 'num' }, 'CTR'), el('th', { class: 'num' }, 'CPC'),
+          el('th', { class: 'num' }, 'CPA'))),
+        tb,
+        el('tfoot', {}, el('tr', { class: 'row-total' },
+          el('td', { class: 'table-left' }, `รวมวันนี้`),
+          el('td', { class: 'num' }, fmt(dayTotal.impressions, 0)),
+          el('td', { class: 'num' }, fmt(dayTotal.clicks, 0)),
+          el('td', { class: 'num' }, fmt(dayTotal.cost, 2)),
+          el('td', { class: 'num' }, fmt(dayTotal.conversions, 2)),
+          el('td', { class: 'num' }, dayTotal.ctr === null ? '—' : fmt(dayTotal.ctr, 2) + '%'),
+          el('td', { class: 'num' }, dayTotal.cpc === null ? '—' : fmt(dayTotal.cpc, 2)),
+          el('td', { class: 'num' }, dayTotal.cpa === null ? '—' : fmt(dayTotal.cpa, 2)))))));
+
+    host.append(box);
+  });
 }
 
 /** กราฟแท่งรายวัน — แท่งเดียวต่อวัน ตัวชี้วัดตามที่เลือก */
@@ -3346,7 +3447,17 @@ function copySpend(kind) {
   const rows = spendRows();
   const total = spendTotals(rows);
   const lines = [];
-  if (kind === 'day') {
+  if (kind === 'campaignDay') {
+    lines.push('วันที่\tแคมเปญ\tImpr\tClicks\tCost\tConv\tCTR\tCPC\tCPA');
+    const sorted = rows.slice().sort((a, b) =>
+      String(b.date).localeCompare(String(a.date)) ||
+      (num(b.cost) || 0) - (num(a.cost) || 0));
+    for (const m of sorted) {
+      const t = spendTotals([m]);
+      lines.push([m.date, m.campaign, t.impressions, t.clicks, t.cost, t.conversions,
+        t.ctr ?? '', t.cpc ?? '', t.cpa ?? ''].join('\t'));
+    }
+  } else if (kind === 'day') {
     lines.push('วันที่\tImpr\tClicks\tCost\tConv\tCTR\tCPC\tCPA');
     for (const d of spendByDay(rows)) {
       lines.push([d.date, d.impressions, d.clicks, d.cost, d.conversions,
@@ -3374,6 +3485,32 @@ function copySpend(kind) {
 /* ─────────────────────────────────────────────────────────────
    ตัวเลขรายวันจาก Google Ads (ชีต METRICS)
    ───────────────────────────────────────────────────────────── */
+
+const BID_STRATEGY_TH = {
+  MANUAL_CPC: 'Manual CPC',
+  ENHANCED_CPC: 'Enhanced CPC',
+  TARGET_CPA: 'Target CPA',
+  TARGET_ROAS: 'Target ROAS',
+  TARGET_SPEND: 'Maximize clicks',
+  MAXIMIZE_CONVERSIONS: 'Maximize conversions',
+  MAXIMIZE_CONVERSION_VALUE: 'Maximize conv. value',
+  TARGET_IMPRESSION_SHARE: 'Target impression share'
+};
+
+/** ป้ายกลยุทธ์ + ค่าเป้าหมาย เช่น "Target CPA · ฿250" */
+function strategyLabel(row) {
+  if (!row) return '';
+  const name = BID_STRATEGY_TH[row.bid_strategy] || String(row.bid_strategy || '');
+  const cpa = num(row.target_cpa), roas = num(row.target_roas);
+  if (cpa !== null) return `${name} · ฿${fmt(cpa, 2)}`;
+  if (roas !== null) return `${name} · ${fmt(roas * 100, 0)}%`;
+  return name;
+}
+
+/** แคมเปญนี้ bid เองหรือเปล่า — ถ้าไม่ Max CPC จะไม่มีความหมาย */
+function isManualBidding(row) {
+  return !!row && /^(MANUAL_CPC|ENHANCED_CPC|MANUAL_CPM|MANUAL_CPV)$/.test(String(row.bid_strategy || ''));
+}
 
 function hasAdsData() { return Array.isArray(Store.metrics) && Store.metrics.length > 0; }
 
@@ -3495,6 +3632,7 @@ function budgetRows() {
       bid: latestSetting(name, 'bid'),
       status: ads ? String(ads.status || '') : '',
       strategy: ads ? String(ads.bid_strategy || '') : '',
+      ads,
       cpc,
       lastTouch: recs[0]?.date || ''
     });
@@ -3612,7 +3750,7 @@ function renderBudgetPage() {
   const tbody = $('#budgetTable').querySelector('tbody');
   tbody.innerHTML = '';
   if (!rows.length) {
-    tbody.append(el('tr', {}, el('td', { colspan: '8' },
+    tbody.append(el('tr', {}, el('td', { colspan: '9' },
       el('div', { class: 'empty' },
         el('strong', {}, 'ยังไม่มีข้อมูลงบและ bid'),
         'กรอกช่อง "งบต่อวัน" และ "Max CPC bid" ในหน้าบันทึกใหม่ตอนที่เปลี่ยนค่า แล้วหน้านี้จะดึงค่าล่าสุดมาแสดงให้เอง'))));
@@ -3649,8 +3787,16 @@ function renderBudgetPage() {
       el('td', {}, r.product || '—'),
       cell(r.budget, 0, ' ฿'),
       when(r.budget),
-      cell(r.bid, 2, ' ฿'),
-      when(r.bid),
+      el('td', {}, r.strategy
+        ? el('span', { class: 'src-ads' }, strategyLabel(r.ads))
+        : el('span', { class: 'val-none' }, '—')),
+      // Max CPC มีความหมายเฉพาะแคมเปญที่ bid เอง
+      (r.ads && !isManualBidding(r.ads) && !r.bid)
+        ? el('td', { class: 'num val-none', title: 'แคมเปญนี้ใช้ smart bidding — Google คุม bid ให้ ไม่มี Max CPC รายตัว' }, 'ไม่ใช้')
+        : cell(r.bid, 2, ' ฿'),
+      (r.ads && !isManualBidding(r.ads) && !r.bid)
+        ? el('td', { class: 'val-none' }, '—')
+        : when(r.bid),
       r.cpc === null
         ? el('td', { class: 'num val-none' }, '—')
         : el('td', { class: 'num' + (overBid ? ' delta-down' : '') },
@@ -4669,6 +4815,20 @@ function renderConnStatusBox() {
   const box = $('#connSource');
   if (!box) return;
   box.innerHTML = '';
+
+  if (!Store.online && /api\/sheet/.test(Store.lastError || '')) {
+    box.append(el('div', { class: 'banner bad' },
+      el('span', { class: 'icon' }, '🔌'),
+      el('span', {},
+        el('b', {}, 'ยังไม่พบตัวกลาง /api/sheet '),
+        'เวอร์ชันนี้ไม่เก็บรหัสไว้ในโค้ดแล้ว จึงต้องมีตัวกลางฝั่งเซิร์ฟเวอร์',
+        el('div', { style: 'margin-top:8px' },
+          'ทางเลือก 1 — ย้ายไป Cloudflare Pages แล้วอัปโฟลเดอร์ ', el('code', {}, 'functions/'),
+          ' ขึ้นไปด้วย (ดูขั้นตอนใน README)'),
+        el('div', { style: 'margin-top:4px' },
+          'ทางเลือก 2 — ใช้ไปก่อน: กรอก URL ', el('code', {}, '/exec'),
+          ' กับ token ในช่องด้านล่าง ค่าจะเก็บในเบราว์เซอร์เครื่องนี้เท่านั้น ไม่ขึ้น repo'))));
+  }
 
   const up = upgradeBanner();
   if (up) box.append(up);
