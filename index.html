@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="assets/styles.css?v=1.11.1">
+<link rel="stylesheet" href="assets/styles.css?v=1.13.0">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%232a78d6'/><path d='M8 22 L13 14 L18 18 L24 9' stroke='white' stroke-width='2.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
 </head>
 <body>
@@ -34,9 +34,10 @@
     <button class="nav-item" role="tab" id="tab-timeline" aria-controls="panel-timeline" aria-selected="false" tabindex="-1"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13"/><circle cx="3.5" cy="6" r="1"/><circle cx="3.5" cy="12" r="1"/><circle cx="3.5" cy="18" r="1"/></svg><span>ไทม์ไลน์</span><kbd class="nav-key">2</kbd></button>
     <button class="nav-item" role="tab" id="tab-dashboard" aria-controls="panel-dashboard" aria-selected="false" tabindex="-1"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/></svg><span>แดชบอร์ด</span><kbd class="nav-key">3</kbd></button>
     <button class="nav-item" role="tab" id="tab-trend" aria-controls="panel-trend" aria-selected="false" tabindex="-1"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M23 6l-9.5 9.5-5-5L1 18"/><path d="M17 6h6v6"/></svg><span>กราฟเทรนด์</span><kbd class="nav-key">4</kbd></button>
-    <button class="nav-item" role="tab" id="tab-budget" aria-controls="panel-budget" aria-selected="false" tabindex="-1"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="6" width="19" height="13" rx="2.5"/><path d="M2.5 10.5h19"/><path d="M6.5 15h3"/></svg><span>งบ &amp; Bid</span><kbd class="nav-key">5</kbd></button>
+    <button class="nav-item" role="tab" id="tab-spend" aria-controls="panel-spend" aria-selected="false" tabindex="-1"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20h18"/><rect x="5" y="11" width="3.5" height="7" rx="1"/><rect x="10.25" y="7" width="3.5" height="11" rx="1"/><rect x="15.5" y="13" width="3.5" height="5" rx="1"/></svg><span>ตัวเลขรายวัน</span><kbd class="nav-key">5</kbd></button>
+    <button class="nav-item" role="tab" id="tab-budget" aria-controls="panel-budget" aria-selected="false" tabindex="-1"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="6" width="19" height="13" rx="2.5"/><path d="M2.5 10.5h19"/><path d="M6.5 15h3"/></svg><span>งบ &amp; Bid</span><kbd class="nav-key">6</kbd></button>
     <span class="nav-label">ระบบ</span>
-    <button class="nav-item" role="tab" id="tab-data" aria-controls="panel-data" aria-selected="false" tabindex="-1"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg><span>ตั้งค่า</span><kbd class="nav-key">6</kbd></button>
+    <button class="nav-item" role="tab" id="tab-data" aria-controls="panel-data" aria-selected="false" tabindex="-1"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg><span>ตั้งค่า</span><kbd class="nav-key">7</kbd></button>
   </nav>
 
   <div class="sidebar-foot">
@@ -373,7 +374,95 @@
   </div>
 </section>
 
-<!-- ══════════════ 5. งบ & Bid ปัจจุบัน ══════════════ -->
+<!-- ══════════════ 5. ตัวเลขรายวันจาก Google Ads ══════════════ -->
+<section class="panel" id="panel-spend" role="tabpanel" aria-labelledby="tab-spend" hidden>
+  <div id="spendWarn"></div>
+
+  <div class="filterbar">
+    <div class="field">
+      <span class="field-label">ช่วงเวลา</span>
+      <div class="presets" id="spendPresets"></div>
+    </div>
+    <label class="field w-sm">
+      <span class="field-label">ตั้งแต่</span>
+      <input type="date" id="spend_from">
+    </label>
+    <label class="field w-sm">
+      <span class="field-label">ถึง</span>
+      <input type="date" id="spend_to">
+    </label>
+    <label class="field w-md">
+      <span class="field-label">แคมเปญ</span>
+      <select id="spendCampaign"><option value="">ทุกแคมเปญ (ยอดรวม)</option></select>
+    </label>
+    <label class="field w-sm">
+      <span class="field-label">กราฟแสดง</span>
+      <select id="spendMetric">
+        <option value="cost">Cost</option>
+        <option value="impressions">Impressions</option>
+        <option value="clicks">Clicks</option>
+        <option value="conversions">Conversions</option>
+      </select>
+    </label>
+  </div>
+
+  <div class="stat-row" id="spendStats"></div>
+
+  <div class="card">
+    <div class="card-head">
+      <h2 id="spendChartTitle">รายวัน</h2>
+      <span class="card-note" id="spendChartNote"></span>
+    </div>
+    <div class="chart-shell" id="spendShell">
+      <svg class="chart" id="spendChart" role="img" aria-label="กราฟแท่งตัวเลขรายวัน"></svg>
+      <div class="tooltip" id="spendTooltip" hidden></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <h2>แยกรายแคมเปญ</h2>
+      <span class="card-note">ยอดรวมของช่วงที่เลือก · เรียงตาม Cost มากไปน้อย</span>
+      <button class="btn btn-sm" id="spendCopyCamp" style="margin-left:auto">คัดลอก</button>
+    </div>
+    <div class="table-wrap">
+      <table class="data" id="spendCampTable">
+        <thead>
+          <tr>
+            <th class="table-left">แคมเปญ</th><th class="num">Impr</th><th class="num">Clicks</th>
+            <th class="num">Cost</th><th class="num">Conv</th><th class="num">CTR</th>
+            <th class="num">CPC</th><th class="num">CPA</th><th class="num">% ของ Cost</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+        <tfoot></tfoot>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <h2>ตารางรายวัน</h2>
+      <span class="card-note" id="spendDayNote"></span>
+      <button class="btn btn-sm" id="spendCopyDay" style="margin-left:auto">คัดลอก</button>
+    </div>
+    <div class="table-wrap scroll-lg">
+      <table class="data" id="spendDayTable">
+        <thead>
+          <tr>
+            <th class="table-left">วันที่</th><th class="num">Impr</th><th class="num">Clicks</th>
+            <th class="num">Cost</th><th class="num">Conv</th><th class="num">CTR</th>
+            <th class="num">CPC</th><th class="num">CPA</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+        <tfoot></tfoot>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════ 6. งบ & Bid ปัจจุบัน ══════════════ -->
 <section class="panel" id="panel-budget" role="tabpanel" aria-labelledby="tab-budget" hidden>
   <div id="budgetWarn"></div>
   <div class="stat-row" id="budgetStats"></div>
@@ -433,7 +522,7 @@
   </div>
 </section>
 
-<!-- ══════════════ 6. ตั้งค่า ══════════════ -->
+<!-- ══════════════ 7. ตั้งค่า ══════════════ -->
 <section class="panel" id="panel-data" role="tabpanel" aria-labelledby="tab-data" hidden>
 
   <div class="card">
@@ -565,6 +654,7 @@
     <h2>ใส่ตัวเลขวัดผล</h2>
     <p class="card-note" id="measSub"></p>
 
+    <div id="measPull"></div>
     <div id="measBaseline"></div>
 
     <div class="field-row cols-2" style="margin-top:14px">
@@ -610,7 +700,7 @@
       <tbody>
         <tr><td><kbd>Ctrl</kbd> <kbd>Enter</kbd></td><td>บันทึก (ใช้ได้แม้เคอร์เซอร์อยู่ในช่องข้อความ)</td></tr>
         <tr><td><kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>Enter</kbd></td><td>บันทึกแล้วจดต่อทันที</td></tr>
-        <tr><td><kbd>1</kbd> – <kbd>6</kbd></td><td>สลับเมนูตามลำดับในแถบซ้าย</td></tr>
+        <tr><td><kbd>1</kbd> – <kbd>7</kbd></td><td>สลับเมนูตามลำดับในแถบซ้าย</td></tr>
         <tr><td><kbd>/</kbd></td><td>กระโดดไปช่องค้นหาในไทม์ไลน์</td></tr>
         <tr><td><kbd>N</kbd></td><td>เริ่มบันทึกใหม่ (ล้างฟอร์ม)</td></tr>
         <tr><td><kbd>T</kbd></td><td>ดูสรุปของวันนี้</td></tr>
@@ -638,6 +728,6 @@
   </div>
 </dialog>
 
-<script src="assets/app.js?v=1.11.1"></script>
+<script src="assets/app.js?v=1.13.0"></script>
 </body>
 </html>
