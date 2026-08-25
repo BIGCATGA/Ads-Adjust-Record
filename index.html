@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="assets/styles.css?v=1.15.0">
+<link rel="stylesheet" href="assets/styles.css?v=1.16.0">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%232a78d6'/><path d='M8 22 L13 14 L18 18 L24 9' stroke='white' stroke-width='2.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
 </head>
 <body>
@@ -31,7 +31,7 @@
   <nav class="nav" role="tablist" aria-label="เมนูหลัก">
     <span class="nav-label">เมนู</span>
     <button class="nav-item" role="tab" id="tab-new" aria-controls="panel-new" aria-selected="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg><span>บันทึกใหม่</span><kbd class="nav-key">1</kbd></button>
-    <button class="nav-item" role="tab" id="tab-timeline" aria-controls="panel-timeline" aria-selected="false" tabindex="-1"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13"/><circle cx="3.5" cy="6" r="1"/><circle cx="3.5" cy="12" r="1"/><circle cx="3.5" cy="18" r="1"/></svg><span>ไทม์ไลน์</span><kbd class="nav-key">2</kbd></button>
+    <button class="nav-item" role="tab" id="tab-timeline" aria-controls="panel-timeline" aria-selected="false" tabindex="-1"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13"/><circle cx="3.5" cy="6" r="1"/><circle cx="3.5" cy="12" r="1"/><circle cx="3.5" cy="18" r="1"/></svg><span>ไทม์ไลน์</span><span class="nav-badge" id="inboxBadge" hidden></span><kbd class="nav-key">2</kbd></button>
     <button class="nav-item" role="tab" id="tab-dashboard" aria-controls="panel-dashboard" aria-selected="false" tabindex="-1"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/></svg><span>แดชบอร์ด</span><kbd class="nav-key">3</kbd></button>
     <button class="nav-item" role="tab" id="tab-trend" aria-controls="panel-trend" aria-selected="false" tabindex="-1"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M23 6l-9.5 9.5-5-5L1 18"/><path d="M17 6h6v6"/></svg><span>กราฟเทรนด์</span><kbd class="nav-key">4</kbd></button>
     <button class="nav-item" role="tab" id="tab-spend" aria-controls="panel-spend" aria-selected="false" tabindex="-1"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20h18"/><rect x="5" y="11" width="3.5" height="7" rx="1"/><rect x="10.25" y="7" width="3.5" height="11" rx="1"/><rect x="15.5" y="13" width="3.5" height="5" rx="1"/></svg><span>ตัวเลขรายวัน</span><kbd class="nav-key">5</kbd></button>
@@ -214,6 +214,9 @@
     <button class="btn btn-sm btn-ghost" id="clearFilters">ล้าง</button>
   </div>
   </details>
+
+  <!-- กล่องงานที่รอ: การเปลี่ยนแปลงที่ Google Ads บอกมา + บันทึกที่ถึงกำหนดวัดผล -->
+  <div id="inbox"></div>
 
   <div class="summary-bar" id="timelineTiles"></div>
   <span class="visually-hidden" id="timelineCount"></span>
@@ -452,6 +455,42 @@
 
   <div class="card">
     <div class="card-head">
+      <h2>เทียบกันในกลุ่มสินค้าเดียวกัน</h2>
+      <span class="card-note">ขายของแบบเดียวกันแต่ต้นทุนต่างกันมาก = มีอะไรให้แก้</span>
+      <label class="field w-sm" style="margin-left:auto">
+        <select id="benchMetric">
+          <option value="cpa">CPA</option>
+          <option value="cpc">CPC</option>
+          <option value="ctr">CTR</option>
+          <option value="cvr">CVR</option>
+        </select>
+      </label>
+    </div>
+    <div id="benchList"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <h2>วันไหนของสัปดาห์แพงกว่ากัน</h2>
+      <span class="card-note" id="dowNote">รวมทุกวันในช่วงที่เลือก แยกตามวันในสัปดาห์</span>
+    </div>
+    <div class="table-wrap">
+      <table class="data" id="dowTable">
+        <thead>
+          <tr>
+            <th class="table-left">วัน</th><th class="num">จำนวนวัน</th><th class="num">Cost</th>
+            <th class="num">Clicks</th><th class="num">Conv</th>
+            <th class="num">CPA</th><th class="num">CVR</th><th class="num">เทียบค่าเฉลี่ย</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div id="dowHint"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
       <h2>แยกรายแคมเปญ</h2>
       <span class="card-note">ยอดรวมของช่วงที่เลือก · เรียงตาม Cost มากไปน้อย</span>
       <button class="btn btn-sm" id="spendCopyCamp" style="margin-left:auto">คัดลอก</button>
@@ -496,18 +535,22 @@
             <th>แคมเปญ</th>
             <th>สินค้า</th>
             <th class="num">งบ/วัน</th>
-            <th>ตั้งเมื่อ</th>
+            <th>ใช้งบจริง</th>
             <th>กลยุทธ์ Bid</th>
-            <th class="num">Max CPC</th>
-            <th>ตั้งเมื่อ</th>
+            <th class="num">ค่าที่ตั้งไว้</th>
             <th class="num">CPC จริงล่าสุด</th>
+            <th>ตั้งเมื่อ</th>
             <th></th>
           </tr>
         </thead>
         <tbody></tbody>
       </table>
     </div>
-    <p class="card-note" style="margin-top:12px">"CPC จริงล่าสุด" มาจากตัวเลขวัดผลครั้งล่าสุด — ถ้าสูงกว่า Max CPC มาก แปลว่า bid ที่ตั้งไว้อาจไม่ใช่ตัวคุมจริง</p>
+    <p class="card-note" style="margin-top:12px">
+      <b>"ค่าที่ตั้งไว้"</b> เปลี่ยนความหมายตามกลยุทธ์ — Manual CPC ดู Max CPC · Maximize clicks ดูเพดาน CPC ·
+      Target CPA/ROAS ดูค่าเป้าหมาย · แคมเปญที่ Google คุมเองทั้งหมดจะไม่มีค่าให้ตั้ง<br>
+      <b>"ใช้งบจริง"</b> คือสัดส่วนที่ใช้จริงเทียบกับงบที่ตั้ง 14 วันล่าสุด — ตันแปลว่าเพิ่มงบน่าจะได้ผล เหลือแปลว่าปัญหาอยู่ที่อื่น
+    </p>
   </div>
 
   <div class="card" id="budgetCleanup" hidden>
@@ -739,6 +782,6 @@
   </div>
 </dialog>
 
-<script src="assets/app.js?v=1.15.0"></script>
+<script src="assets/app.js?v=1.16.0"></script>
 </body>
 </html>
