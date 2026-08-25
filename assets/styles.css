@@ -32,6 +32,7 @@
   --critical: #d03b3b;
   --good-text:     #006300;
   --critical-text: #b02b2b;
+  --warning-text:  #8a5300;
   --good-wash:     rgba(12, 163, 12, 0.10);
   --critical-wash: rgba(208, 59, 59, 0.10);
   --warning-wash:  rgba(250, 178, 25, 0.14);
@@ -97,6 +98,7 @@
     --series-8: #e66767;
 
     --good-text:     #22b822;
+    --warning-text:  #f0b429;
     --critical-text: #ef7373;
     --good-wash:     rgba(12, 163, 12, 0.16);
     --critical-wash: rgba(208, 59, 59, 0.18);
@@ -143,6 +145,7 @@
   --series-8: #e66767;
 
   --good-text:     #22b822;
+  --warning-text:  #f0b429;
   --critical-text: #ef7373;
   --good-wash:     rgba(12, 163, 12, 0.16);
   --critical-wash: rgba(208, 59, 59, 0.18);
@@ -1286,3 +1289,102 @@ tr.row-warn td { background: var(--warning-wash); }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   v1.16 — กล่องงานที่รอ · ความน่าเชื่อของผล · สถานะงบ · benchmark
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── ป้ายจำนวนงานค้างบนเมนู */
+.nav-badge {
+  margin-left: auto;
+  min-width: 20px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--warning);
+  color: #3a2a00;
+  font-size: 0.7rem;
+  font-weight: 600;
+  line-height: 1.5;
+  text-align: center;
+}
+.nav-item[aria-selected="true"] .nav-badge { background: #fff; color: var(--accent-solid); }
+.nav-badge + .nav-key { margin-left: 8px; }
+
+/* ── กล่องงานที่รอ */
+.inbox-card { border-left: 3px solid var(--accent-solid); }
+.pill-count {
+  display: inline-block;
+  min-width: 22px;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--accent-solid);
+  color: #fff;
+  font-size: 0.74rem;
+  font-weight: 600;
+  vertical-align: 2px;
+}
+.inbox-list { display: flex; flex-direction: column; gap: 8px; }
+.inbox-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface-2);
+}
+.inbox-item.is-ready { border-color: color-mix(in srgb, var(--good) 45%, var(--border)); background: var(--good-wash); }
+.ib-main { flex: 1 1 260px; min-width: 0; }
+.ib-title { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.ib-title b { font-weight: 500; }
+/* พื้นการ์ดในกล่องงานเข้มกว่าพื้นปกติ ใช้ text-muted แล้ว contrast ตกในโหมดมืด */
+.ib-date { font-size: 0.76rem; color: var(--text-secondary); }
+.ib-detail { margin-top: 3px; font-size: 0.86rem; color: var(--text-secondary); }
+.ib-from { color: var(--text-secondary); text-decoration: line-through; }
+.ib-arrow { color: var(--text-muted); }
+.ib-to { font-weight: 500; color: var(--text); }
+.ib-actions { display: flex; gap: 8px; flex: none; }
+
+/* ── แถบบอกว่าผลเชื่อได้แค่ไหน */
+.conf-note {
+  margin-top: 12px;
+  padding: 10px 13px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  font-size: 0.84rem;
+  line-height: 1.65;
+  color: var(--text-secondary);
+}
+.conf-note b { font-weight: 500; margin-right: 4px; }
+.conf-note.conf-low  { border-color: color-mix(in srgb, var(--critical) 40%, var(--border)); background: var(--critical-wash); }
+.conf-note.conf-mid  { border-color: color-mix(in srgb, var(--warning) 40%, var(--border)); background: var(--warning-wash); }
+.conf-note.conf-high { border-color: color-mix(in srgb, var(--good) 40%, var(--border)); background: var(--good-wash); }
+
+/* ── สถานะการใช้งบในตาราง งบ & Bid */
+.pace {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  border: 1px solid var(--border);
+}
+.pace-tag { font-size: 0.72rem; font-weight: 400; }
+.pace-capped { color: var(--warning-text); border-color: color-mix(in srgb, var(--warning) 45%, var(--border)); background: var(--warning-wash); }
+.pace-idle   { color: var(--text-secondary); border-color: var(--border); background: var(--surface-2); }
+.pace-ok     { color: var(--good-text); border-color: color-mix(in srgb, var(--good) 40%, var(--border)); background: var(--good-wash); }
+
+/* ── ตัวเลขที่ดึงมาจาก Google Ads ตรง ๆ */
+input.from-ads { border-color: color-mix(in srgb, var(--accent-solid) 40%, var(--border)); }
+.ads-pull:empty { display: none; }
+.ads-pull { margin-bottom: 12px; }
+
+/* ── เทียบในกลุ่มสินค้า */
+.bench-group + .bench-group { margin-top: 20px; }
+
+/* ป้ายกำกับใต้ตัวเลขในช่อง "ค่าที่ตั้งไว้" — ต้องอยู่คนละบรรทัด ไม่งั้นเบียดกับตัวเลข */
+td.num .cell-sub { display: block; margin-top: 2px; line-height: 1.4; }

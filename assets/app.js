@@ -8,7 +8,7 @@
    1. ค่าคงที่
    ───────────────────────────────────────────────────────────── */
 
-const APP_VERSION = '1.15.0';
+const APP_VERSION = '1.16.0';
 const LS_CONFIG = 'aar.config.v1';
 
 /* ═══════════════════════════════════════════════════════════════
@@ -901,10 +901,12 @@ function versionAtLeast(have, want) {
   return true;
 }
 
-/** ชีตยังไม่รู้จักคอลัมน์ budget/bid หรือเปล่า */
+/** ชีตยังไม่รู้จักคอลัมน์ที่เวอร์ชันนี้ต้องใช้หรือเปล่า
+ *  1.3.0 = budget/bid · 1.5.0 = ชีต METRICS · 1.6.0 = cpc_ceiling + auto_key */
+const SHEET_MIN_VERSION = '1.6.0';
 function sheetNeedsUpgrade() {
   if (!Store.online || !Store.serverVersion) return false;
-  return !versionAtLeast(Store.serverVersion, '1.3.0');
+  return !versionAtLeast(Store.serverVersion, SHEET_MIN_VERSION);
 }
 
 /**
@@ -955,7 +957,7 @@ function showTab(name) {
     $(`#panel-${p}`).hidden = p !== name;
   }
   location.hash = name;
-  if (name === 'timeline') renderTimeline();
+  if (name === 'timeline') { renderInbox(); renderTimeline(); }
   if (name === 'dashboard') renderDashboard();
   if (name === 'trend') renderTrend();
   if (name === 'spend') renderSpendPage();
@@ -1029,6 +1031,7 @@ const Form = {
   onMetricInput(side) {
     applyDerived(side === 'before' ? $('#beforeFields') : $('#afterFields'), side,
       side === 'before' ? $('#beforeDerived') : $('#afterDerived'));
+    renderAdsPull(side, $('#f_campaign')?.value.trim() || '');
     if (side === 'before') this.updateComparison();
   },
 
@@ -1292,6 +1295,7 @@ const Form = {
     this.fillDefaultDates();
     this.renderBaselineStrip();
     this.updateComparison();
+    for (const side of ['before', 'after']) renderAdsPull(side, campaign);
 
     const sum = $('#numbersSummary');
     if (sum) {
@@ -1416,8 +1420,37 @@ const Form = {
       deltaTiles(cmp)));
   },
 
+  /**
+   * เปิดฟอร์มเป็น "ร่างใหม่" ที่เติมค่าให้บางส่วน — ไม่ใช่การแก้บันทึกเดิม
+   * ใช้ตอนยืนยันสิ่งที่ Google Ads บอกมา
+   */
+  draft(ch) {
+    this.load({ id: '', date: ch.date, campaign: ch.campaign, tags: ch.tag });
+    this.editingId = null;
+    $('#f_id').value = '';
+    $('#formTitle').textContent = 'บันทึกการปรับใหม่';
+    $('#formHint').textContent = 'เติมจาก Google Ads ให้แล้ว — ตรวจดูแล้วใส่เหตุผลด้วย';
+    $('#deleteBtn').hidden = true;
+    this.autoKey = ch.key || '';
+
+    // ใส่ค่า "จาก → เป็น" ลงฟอร์มย่อยของแท็ก แล้วให้ระบบประกอบข้อความเอง
+    const put = (key, v) => {
+      const inp = $(`#tf_${slug(ch.tag)}_${key}`);
+      if (!inp || v === null || v === undefined || v === '') return;
+      inp.value = v;
+    };
+    put('from', ch.formFrom);
+    put('to', ch.formTo);
+    this.composeDetail();
+    // เผื่อแท็กนั้นไม่มีฟอร์มย่อย จะได้ไม่เหลือช่องว่างเปล่า
+    if (!$('#f_change_detail').value.trim()) $('#f_change_detail').value = ch.detail;
+
+    setTimeout(() => $('#f_reason')?.focus(), 150);
+  },
+
   load(rec) {
     this.editingId = rec ? rec.id : null;
+    this.autoKey = rec?.auto_key || '';
     $('#f_id').value = rec ? rec.id : '';
     $('#formTitle').textContent = rec ? 'แก้ไขบันทึก' : 'บันทึกการปรับใหม่';
     $('#formHint').textContent = rec ? `แก้ไขบันทึกวันที่ ${thaiDate(rec.date)}` : '';
@@ -1499,7 +1532,9 @@ const Form = {
       reason: $('#f_reason').value.trim(),
       expected: $('#f_expected').value.trim(),
       result_note: $('#f_result_note').value.trim(),
-      status: hasNumbers(readBlock('after')) ? 'มีผลแล้ว' : 'รอผล'
+      status: hasNumbers(readBlock('after')) ? 'มีผลแล้ว' : 'รอผล',
+      // ติดรหัสไว้ถ้าบันทึกนี้มาจากการยืนยันสิ่งที่ Google Ads บอก — กันเสนอซ้ำ
+      auto_key: this.autoKey || ''
     };
     for (const side of ['before', 'after']) {
       rec[`${side}_start`] = $(`#${side}_start`).value;
@@ -1737,7 +1772,73 @@ function buildMetricFields(host, side, onInput) {
     el('summary', {}, 'ช่องเสริม — Impression Share, Lost IS, Max CPC'),
     el('div', { class: 'more-body' }, extra));
 
-  host.append(dates, primary, strip, calcFields, extraWrap);
+  // แถบ "ดึงจาก Google Ads" — เติมเองตอนมีข้อมูลของช่วงนี้จริง
+  const pull = el('div', { class: 'ads-pull', id: `adsPull_${side}` });
+
+  host.append(dates, pull, primary, strip, calcFields, extraWrap);
+}
+
+/**
+ * เอายอดรวมจากชีต METRICS ใส่ช่องกรอกของฝั่งหนึ่ง
+ * ค่าที่เติมด้วยวิธีนี้ถือเป็น "ค่าที่ผู้ใช้ยืนยัน" (ไม่ติด data-auto)
+ * เพราะเป็นตัวเลขจริงจาก Google ไม่ใช่ค่าที่ระบบคำนวณเดาเอง — พิมพ์ทับได้ตามปกติ
+ */
+function fillFromAds(side, sum) {
+  clearAutoFlags(side);
+  const put = (key, v) => {
+    const input = $(`#${side}_${key}`);
+    if (!input) return;
+    input.value = v === null || v === undefined ? '' : v;
+    input.classList.add('from-ads');
+  };
+  put('impressions', sum.impressions);
+  put('clicks', sum.clicks);
+  put('cost', sum.cost);
+  put('conversions', sum.conversions);
+  put('ctr', sum.ctr);
+  put('cpc', sum.cpc);
+  if (sum.impr_share !== null) put('impr_share', sum.impr_share);
+}
+
+/** แถบ "มีตัวเลขจาก Google Ads ของช่วงนี้" เหนือช่องกรอก */
+function renderAdsPull(side, campaign) {
+  const host = $(`#adsPull_${side}`);
+  if (!host) return;
+  const sig = `${campaign}|${$(`#${side}_start`)?.value || ''}|${$(`#${side}_end`)?.value || ''}|${Store.rev}`;
+  if (host.dataset.sig === sig) return;         // ไม่ต้องวาดซ้ำระหว่างพิมพ์
+  host.dataset.sig = sig;
+  host.innerHTML = '';
+
+  if (!hasAdsData() || !campaign) return;
+  const from = $(`#${side}_start`)?.value, to = $(`#${side}_end`)?.value;
+  if (!from || !to) return;
+
+  const sum = sumAdsRange(campaign, from, to);
+  const upTo = adsDataUpTo();
+  if (!sum) {
+    host.append(el('div', { class: 'banner' },
+      el('span', { class: 'icon' }, '☁️'),
+      el('span', {}, `ไม่มีตัวเลขจาก Google Ads ของช่วงนี้ — ข้อมูลที่ดึงมาแล้วถึง ${thaiDate(upTo)}`)));
+    return;
+  }
+
+  host.append(el('div', { class: 'banner good' },
+    el('span', { class: 'icon' }, '☁️'),
+    el('span', {},
+      el('b', {}, `Google Ads มีตัวเลขของช่วงนี้ครบ ${sum.days} วัน `),
+      `(Impr ${fmt(sum.impressions, 0)} · Clicks ${fmt(sum.clicks, 0)} · Cost ${fmt(sum.cost, 2)} ฿ · Conv ${fmt(sum.conversions, 2)})`,
+      to > upTo ? el('div', { class: 'card-note', style: 'margin-top:6px' },
+        `ข้อมูลมีถึง ${thaiDate(upTo)} — วันหลังจากนั้นยังไม่ถูกดึงมา ตัวเลขจะไม่ครบช่วง`) : null,
+      el('div', { style: 'margin-top:9px' },
+        el('button', {
+          type: 'button', class: 'btn btn-sm btn-primary', id: `pullBtn_${side}`,
+          onclick: () => {
+            fillFromAds(side, sum);
+            host.dataset.sig = '';
+            Form.onMetricInput(side);
+            toast(`เติมตัวเลข ${sum.days} วันจาก Google Ads แล้ว — ตรวจดูก่อนบันทึก`, 3600);
+          }
+        }, 'เติมตัวเลขให้เลย')))));
 }
 
 /** สลับแถบผลคำนวณเป็นช่องกรอกเอง (เผื่อบางครั้งมีแต่ Cost ไม่มี CPC) */
@@ -2837,19 +2938,7 @@ const Measure = {
 
   /** เอายอดรวมจาก Google Ads ใส่ช่องกรอก */
   applyAds(sum) {
-    clearAutoFlags('meas');
-    const put = (key, v) => {
-      const input = $('#meas_' + key);
-      if (!input) return;
-      input.value = v === null || v === undefined ? '' : v;
-    };
-    put('impressions', sum.impressions);
-    put('clicks', sum.clicks);
-    put('cost', sum.cost);
-    put('conversions', sum.conversions);
-    put('ctr', sum.ctr);
-    put('cpc', sum.cpc);
-    if (sum.impr_share !== null) put('impr_share', sum.impr_share);
+    fillFromAds('meas', sum);
     this.onInput();
     toast(`เติมตัวเลข ${sum.days} วันจาก Google Ads แล้ว — ตรวจดูก่อนกดบันทึก`, 3800);
   },
@@ -2878,11 +2967,17 @@ const Measure = {
     if (!hasNumbers(cur)) return;
     const cmp = compareBlocks(this.baseline.block, cur, 'auto');
     if (!cmp) return;
+    const cpaRow = cmp.rows.find(r => r.key === 'cpa');
+    const noise = noiseVerdict(this.campaign, cpaRow ? cpaRow.deltaPct : null);
     host.append(el('div', { class: 'verdict-panel' },
       el('div', { class: 'card-head', style: 'margin-bottom:12px' },
         el('h3', {}, 'เทียบกับตัวเลขครั้งก่อน'),
         verdictBadge(cmp.verdict)),
-      deltaTiles(cmp)));
+      deltaTiles(cmp),
+      confidenceNote(this.baseline.block, cur),
+      noise ? el('div', { class: `conf-note ${noise.beyond ? 'conf-high' : 'conf-mid'}` },
+        el('b', {}, noise.beyond ? 'เกินกรอบความแกว่งปกติ' : 'ยังอยู่ในกรอบความแกว่งปกติ'),
+        ' ' + noise.text) : null));
   },
 
   async save() {
@@ -2974,11 +3069,17 @@ function openRecordNumbers(rec) {
   const cmp = rnd ? roundCompare(rnd, 'auto') : null;
   if (cmp) {
     host.append(el('div', { class: 'section-label', style: 'margin-top:20px' }, 'เทียบกับรอบก่อนหน้า'));
+    const cpaRow = cmp.rows.find(r => r.key === 'cpa');
+    const noise = noiseVerdict(rec.campaign, cpaRow ? cpaRow.deltaPct : null);
     host.append(el('div', { class: 'verdict-panel' },
       el('div', { class: 'card-head', style: 'margin-bottom:12px' },
         el('h3', {}, 'ผลรวมของรอบนี้'),
         verdictBadge(cmp.verdict)),
-      deltaTiles(cmp)));
+      deltaTiles(cmp),
+      confidenceNote(block(rnd.from, 'before'), block(rnd.to, 'before')),
+      noise ? el('div', { class: `conf-note ${noise.beyond ? 'conf-high' : 'conf-mid'}` },
+        el('b', {}, noise.beyond ? 'เกินกรอบความแกว่งปกติ' : 'ยังอยู่ในกรอบความแกว่งปกติ'),
+        ' ' + noise.text) : null));
     host.append(deltaTable(cmp));
     if (rnd.adjustments?.length) {
       host.append(el('div', { class: 'section-label', style: 'margin-top:18px' },
@@ -3000,6 +3101,300 @@ function openRecordNumbers(rec) {
     }, 'ปิด')));
 
   $('#viewModal').showModal();
+}
+
+/* ─────────────────────────────────────────────────────────────
+   10a-4. จับการเปลี่ยนแปลงจาก Google Ads เอง
+
+   หัวใจของเรื่องนี้: ชีต METRICS เก็บ "งบ / กลยุทธ์ / เพดาน bid / เป้า CPA"
+   ของทุกวันอยู่แล้ว การเทียบวันต่อวันจึงบอกได้เลยว่าวันไหนมีการปรับ
+   ไม่ต้องพึ่ง change history ของ Google (ซึ่งย้อนได้แค่ 30 วัน)
+
+   สิ่งที่จับได้: งบ · กลยุทธ์ bid · เพดาน CPC · Max CPC · เป้า CPA · เป้า ROAS
+   สิ่งที่จับไม่ได้: keyword, ข้อความโฆษณา, negative, audience — ต้องจดเอง
+   ───────────────────────────────────────────────────────────── */
+
+const LS_DISMISS = 'aar.dismissed.v1';
+
+const WATCHED_FIELDS = [
+  { key: 'budget', label: 'งบต่อวัน', tag: 'ปรับงบประมาณ', kind: 'money', dec: 0,
+    minPct: 1, setting: 'budget' },
+  { key: 'bid_strategy', label: 'กลยุทธ์ Bid', tag: 'เปลี่ยน Bid Strategy', kind: 'text' },
+  { key: 'cpc_ceiling', label: 'เพดาน CPC', tag: 'ปรับ Bid / Max CPC', kind: 'money', dec: 2,
+    minPct: 1, setting: 'bid' },
+  { key: 'max_cpc', label: 'Max CPC', tag: 'ปรับ Bid / Max CPC', kind: 'money', dec: 2,
+    minPct: 1, setting: 'bid' },
+  { key: 'target_cpa', label: 'เป้า CPA', tag: 'ปรับ Bid / Max CPC', kind: 'money', dec: 2, minPct: 1 },
+  { key: 'target_roas', label: 'เป้า ROAS', tag: 'ปรับ Bid / Max CPC', kind: 'ratio', dec: 2, minPct: 1 }
+];
+const WATCHED_BY_KEY = Object.fromEntries(WATCHED_FIELDS.map(f => [f.key, f]));
+
+function fieldValueText(f, v) {
+  if (v === '' || v === null || v === undefined) return '—';
+  if (f.kind === 'text') return BID_STRATEGY_TH[v] || String(v);
+  if (f.kind === 'ratio') return fmt(num(v) * 100, 0) + '%';
+  return fmt(num(v), f.dec) + ' ฿';
+}
+
+/**
+ * ไล่ดูตัวเลขรายวันของแต่ละแคมเปญ แล้วคืนรายการวันที่ค่าตั้งเปลี่ยน
+ * ข้ามวันแรกที่แคมเปญโผล่มา (นั่นคือ "ค่าเริ่มต้น" ไม่ใช่การปรับ)
+ */
+function adsChangeLog(days = 120) {
+  if (!hasAdsData()) return [];
+  const cutoff = isoOffset(-days);
+
+  const byCampaign = new Map();
+  for (const m of Store.metrics || []) {
+    const name = String(m.campaign || '').trim();
+    const d = String(m.date || '');
+    if (!name || !d) continue;
+    if (!byCampaign.has(name)) byCampaign.set(name, []);
+    byCampaign.get(name).push(m);
+  }
+
+  const out = [];
+  for (const [campaign, rowsRaw] of byCampaign) {
+    const rows = rowsRaw.slice().sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    for (let i = 1; i < rows.length; i++) {
+      const prev = rows[i - 1], cur = rows[i];
+      for (const f of WATCHED_FIELDS) {
+        const a = prev[f.key], b = cur[f.key];
+        const aEmpty = a === '' || a === null || a === undefined;
+        const bEmpty = b === '' || b === null || b === undefined;
+        if (aEmpty && bEmpty) continue;
+        if (aEmpty) continue;                     // เพิ่งเริ่มมีค่า = ตั้งครั้งแรก ไม่ใช่การปรับ
+
+        let changed;
+        if (f.kind === 'text') {
+          changed = String(a) !== String(b);
+        } else {
+          const na = num(a), nb = num(b);
+          if (na === null && nb === null) continue;
+          if (na === null || nb === null) changed = true;
+          else changed = na !== 0
+            ? Math.abs(nb - na) / Math.abs(na) * 100 >= (f.minPct || 1)
+            : nb !== 0;
+        }
+        if (!changed) continue;
+        if (String(cur.date) < cutoff) continue;
+
+        out.push({
+          key: `${campaign}|${cur.date}|${f.key}`,
+          campaign, date: String(cur.date), field: f.key, label: f.label,
+          from: a, to: b,
+          fromText: fieldValueText(f, a),
+          toText: fieldValueText(f, b),
+          tag: f.tag,
+          setting: f.setting || '',
+          // ค่าที่จะเอาไปใส่ในฟอร์มย่อยของแท็ก (ช่อง "จาก" / "เป็น")
+          formFrom: f.kind === 'text' ? (BID_STRATEGY_TH[a] || String(a)) : num(a),
+          formTo: f.kind === 'text' ? (BID_STRATEGY_TH[b] || String(b)) : num(b),
+          detail: `${f.label} ${fieldValueText(f, a)} → ${fieldValueText(f, b)}`
+        });
+      }
+    }
+  }
+  return out.sort((a, b) => b.date.localeCompare(a.date) || a.campaign.localeCompare(b.campaign));
+}
+
+function dismissedKeys() {
+  try { return new Set(JSON.parse(localStorage.getItem(LS_DISMISS) || '[]')); }
+  catch { return new Set(); }
+}
+
+function dismissChange(key) {
+  const s = dismissedKeys();
+  s.add(key);
+  // เก็บแค่ 500 อันล่าสุดพอ ไม่งั้นโตไม่มีที่สิ้นสุด
+  try { localStorage.setItem(LS_DISMISS, JSON.stringify([...s].slice(-500))); } catch { /* เต็มก็ช่างมัน */ }
+}
+
+function undismissChange(key) {
+  const s = dismissedKeys();
+  s.delete(key);
+  try { localStorage.setItem(LS_DISMISS, JSON.stringify([...s])); } catch { /* ไม่เป็นไร */ }
+}
+
+/**
+ * ยืนยันไปแล้วหรือยัง
+ * ตรวจสองทาง — auto_key ที่บันทึกไว้ตรง ๆ (แม่นสุด) กับการเดาจากบันทึกที่จดเอง
+ * (แคมเปญเดียวกัน วันเดียวกัน และข้อความพูดถึงเรื่องเดียวกัน)
+ */
+function changeCovered(ch) {
+  for (const r of Store.records) {
+    if (String(r.auto_key || '') === ch.key) return 'confirmed';
+  }
+  const f = WATCHED_BY_KEY[ch.field];
+  for (const r of Store.records) {
+    if (r.campaign !== ch.campaign) continue;
+    if (Math.abs(daysBetween(r.date, ch.date)) > 1) continue;
+    const text = `${r.change_detail || ''} ${r.tags || ''}`;
+    if (ch.field === 'budget' && /งบ|budget/i.test(text)) return 'manual';
+    if (ch.field !== 'budget' && f && /bid|บิด|ประมูล|เพดาน|กลยุทธ|CPA|ROAS/i.test(text)) return 'manual';
+  }
+  return '';
+}
+
+/** การเปลี่ยนแปลงที่ยังไม่ได้จดและยังไม่ได้ปัดทิ้ง */
+function pendingAdsChanges() {
+  const dismissed = dismissedKeys();
+  return adsChangeLog().filter(ch => !dismissed.has(ch.key) && !changeCovered(ch));
+}
+
+/* ─────────────────────────────────────────────────────────────
+   10a-4b. บันทึกที่ถึงกำหนดวัดผลแล้ว
+
+   "ถึงกำหนด" ไม่ได้แปลว่าครบ N วัน แต่แปลว่า "มีข้อมูลพอจะสรุปได้แล้ว"
+   ระบบจึงเช็กจำนวน conversion จริงในชีต ไม่ใช่นับวันอย่างเดียว
+   ───────────────────────────────────────────────────────────── */
+
+const MEASURE_MIN_DAYS = 7;
+
+function dueMeasurements() {
+  const today = todayISO();
+  const upTo = adsDataUpTo();
+  const seen = new Set();
+  const out = [];
+
+  for (const rec of Store.sorted()) {
+    const campaign = rec.campaign;
+    if (!campaign || seen.has(campaign)) continue;
+    if (!hasAdjustment(rec)) continue;            // ดูเฉพาะแคมเปญที่การปรับล่าสุดยังไม่ถูกวัด
+    seen.add(campaign);
+
+    const prev = Store.latestMeasured(campaign, today, null);
+    // ถ้าตัวเลขล่าสุดใหม่กว่าการปรับล่าสุด = วัดไปแล้ว
+    if (prev && String(prev.date) >= String(rec.date)) continue;
+
+    const from = prev?.before_end || prev?.date || rec.date;
+    const waited = daysBetween(from, today);
+    if (waited < MEASURE_MIN_DAYS) continue;
+
+    const adj = Store.adjustmentsSince(campaign, from, today, null);
+    const sum = upTo ? sumAdsRange(campaign, from, upTo) : null;
+    const conv = sum ? sum.conversions : null;
+    const ready = conv !== null && conv >= CONF_CONV_MIN;
+
+    out.push({
+      campaign, from, waited, adjustments: adj.length, conv, ready,
+      lastAdjust: rec.date,
+      note: conv === null
+        ? 'ยังไม่มีตัวเลขจาก Google Ads ของช่วงนี้ — กรอกเองได้'
+        : ready
+          ? `มี conversion ${fmt(conv, 2)} ครั้งในช่วงนี้ — พอสรุปได้แล้ว`
+          : `มี conversion แค่ ${fmt(conv, 2)} ครั้ง — รออีกหน่อยจะสรุปได้แม่นกว่า`
+    });
+  }
+  return out.sort((a, b) => (b.ready - a.ready) || (b.waited - a.waited));
+}
+
+/* ─────────────────────────────────────────────────────────────
+   10a-4c. กล่องงานที่รอ (บนหน้าไทม์ไลน์)
+   ───────────────────────────────────────────────────────────── */
+
+function inboxCount() {
+  try { return pendingAdsChanges().length + dueMeasurements().filter(d => d.ready).length; }
+  catch { return 0; }
+}
+
+function updateInboxBadge() {
+  const badge = $('#inboxBadge');
+  if (!badge) return;
+  const n = inboxCount();
+  badge.textContent = n > 99 ? '99+' : String(n);
+  badge.hidden = !n;
+  badge.title = `มี ${n} รายการรอจัดการในไทม์ไลน์`;
+}
+
+function renderInbox() {
+  updateInboxBadge();
+  const host = $('#inbox');
+  if (!host) return;
+  host.innerHTML = '';
+  if (!hasAdsData()) return;
+
+  const changes = pendingAdsChanges();
+  const due = dueMeasurements();
+
+  if (!changes.length && !due.length) return;
+
+  // ── การเปลี่ยนแปลงที่ Google Ads บอกมา แต่ยังไม่ได้จด
+  if (changes.length) {
+    const list = el('div', { class: 'inbox-list' });
+    for (const ch of changes.slice(0, 12)) {
+      list.append(el('div', { class: 'inbox-item', 'data-key': ch.key },
+        el('div', { class: 'ib-main' },
+          el('div', { class: 'ib-title' },
+            el('b', {}, ch.campaign),
+            el('span', { class: 'ib-date' }, `${thaiDate(ch.date)} · ${relativeDay(ch.date)}`)),
+          el('div', { class: 'ib-detail' },
+            ch.label + ' ',
+            el('span', { class: 'ib-from' }, ch.fromText),
+            el('span', { class: 'ib-arrow' }, ' → '),
+            el('span', { class: 'ib-to' }, ch.toText))),
+        el('div', { class: 'ib-actions' },
+          el('button', {
+            class: 'btn btn-sm btn-primary', onclick: () => confirmAdsChange(ch)
+          }, 'ยืนยัน + ใส่เหตุผล'),
+          el('button', {
+            class: 'btn btn-sm btn-ghost', title: 'ซ่อนรายการนี้ไว้ในเครื่องนี้',
+            onclick: () => {
+              dismissChange(ch.key);
+              renderInbox();
+              toastAction('ซ่อนแล้ว', 'เลิกทำ', () => { undismissChange(ch.key); renderInbox(); });
+            }
+          }, 'ไม่ใช่การปรับ'))));
+    }
+
+    host.append(el('div', { class: 'card inbox-card' },
+      el('div', { class: 'card-head' },
+        el('h2', {}, 'Google Ads บอกว่ามีการปรับ ', el('span', { class: 'pill-count' }, String(changes.length))),
+        el('span', { class: 'card-note' },
+          'เทียบตัวเลขรายวันแล้วเจอค่าที่เปลี่ยน — กดยืนยันเพื่อจดลงไทม์ไลน์พร้อมเหตุผล')),
+      list,
+      changes.length > 12
+        ? el('p', { class: 'card-note', style: 'margin-top:10px' },
+            `แสดง 12 รายการแรกจาก ${changes.length} — จัดการแล้วรายการถัดไปจะขึ้นมาเอง`)
+        : null,
+      el('p', { class: 'card-note', style: 'margin-top:10px' },
+        'จับได้เฉพาะงบ · กลยุทธ์ bid · เพดาน CPC · เป้า CPA/ROAS · ' +
+        'ส่วน keyword, ข้อความโฆษณา, negative ยังต้องจดเอง')));
+  }
+
+  // ── บันทึกที่ถึงกำหนดวัดผล
+  if (due.length) {
+    const list = el('div', { class: 'inbox-list' });
+    for (const d of due) {
+      list.append(el('div', { class: `inbox-item${d.ready ? ' is-ready' : ''}` },
+        el('div', { class: 'ib-main' },
+          el('div', { class: 'ib-title' },
+            el('b', {}, d.campaign),
+            el('span', { class: 'ib-date' },
+              `ปรับล่าสุด ${thaiDate(d.lastAdjust)} · ผ่านมา ${d.waited} วัน` +
+              (d.adjustments > 1 ? ` · ปรับไป ${d.adjustments} ครั้ง` : ''))),
+          el('div', { class: 'ib-detail' }, d.note)),
+        el('div', { class: 'ib-actions' },
+          el('button', {
+            class: `btn btn-sm${d.ready ? ' btn-primary' : ''}`,
+            onclick: () => Measure.open(d.campaign)
+          }, 'ใส่ตัวเลขวัดผล'))));
+    }
+    host.append(el('div', { class: 'card inbox-card' },
+      el('div', { class: 'card-head' },
+        el('h2', {}, 'ถึงกำหนดวัดผล ',
+          el('span', { class: 'pill-count' }, String(due.filter(x => x.ready).length))),
+        el('span', { class: 'card-note' },
+          `แคมเปญที่ปรับไปแล้วเกิน ${MEASURE_MIN_DAYS} วันแต่ยังไม่ได้ใส่ตัวเลข`)),
+      list));
+  }
+}
+
+/** เอาการเปลี่ยนแปลงที่ Ads บอกมา ไปเปิดเป็นร่างบันทึกใหม่ให้ใส่เหตุผล */
+function confirmAdsChange(ch) {
+  showTab('new');
+  Form.draft(ch);
+  toast('เติมรายละเอียดจาก Google Ads ให้แล้ว — เหลือใส่เหตุผลกับผลที่คาดหวัง', 4200);
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -3148,6 +3543,9 @@ function renderSpendPage() {
     $('#spendDayTable').querySelector('tfoot').innerHTML = '';
     $('#spendChart').innerHTML = '';
     $('#spendCdList').innerHTML = '';
+    if ($('#benchList')) $('#benchList').innerHTML = '';
+    if ($('#dowHint')) $('#dowHint').innerHTML = '';
+    if ($('#dowTable')) $('#dowTable').querySelector('tbody').innerHTML = '';
     return;
   }
 
@@ -3192,6 +3590,8 @@ function renderSpendPage() {
   const metric = $('#spendMetric').value;
   const METRIC_LABEL = { cost: 'Cost', impressions: 'Impressions', clicks: 'Clicks', conversions: 'Conversions' };
   renderCampaignDay();
+  renderBenchmark();
+  renderWeekdayTable();
   $('#spendChartTitle').textContent = `${METRIC_LABEL[metric]} รายวัน`;
   $('#spendChartNote').textContent = only
     ? `${only} · ${days.length} วัน`
@@ -3443,6 +3843,201 @@ function drawSpendBars() {
   }));
 }
 
+/* ─────────────────────────────────────────────────────────────
+   10a-9. เทียบกันในกลุ่มสินค้าเดียวกัน
+
+   ทำไมถึงมีความหมาย: แคมเปญที่ขาย MacBook เหมือนกันสองตัว ควรมี CPA
+   อยู่ระดับใกล้เคียงกัน ถ้าตัวหนึ่งแพงกว่าอีกตัวเท่าตัว นั่นคือจุดที่ควรไปดู
+   เทียบข้ามกลุ่ม (MacBook กับ Speaker) ไม่มีความหมาย เพราะราคาของต่างกันอยู่แล้ว
+   ───────────────────────────────────────────────────────────── */
+
+const BENCH_METRICS = {
+  cpa: { label: 'CPA', better: 'down', dec: 2, unit: ' ฿' },
+  cpc: { label: 'CPC', better: 'down', dec: 2, unit: ' ฿' },
+  ctr: { label: 'CTR', better: 'up', dec: 2, unit: '%' },
+  cvr: { label: 'CVR', better: 'up', dec: 2, unit: '%' }
+};
+
+/** จัดแคมเปญเข้ากลุ่มสินค้า แล้วคำนวณค่ากลางของแต่ละกลุ่ม */
+function groupBenchmark(metricKey = 'cpa') {
+  const from = $('#spend_from')?.value, to = $('#spend_to')?.value;
+  if (!from || !to) return [];
+
+  const byGroup = new Map();
+  for (const name of adsCampaignNames()) {
+    const recs = Store.sorted().filter(r => r.campaign === name);
+    const product = recs.length ? recProduct(recs[0]) : (Store.campaign(name)?.product || '');
+    const group = product ? Taxonomy.groupOf(product) : '';
+    if (!group) continue;                     // ยังไม่ได้ผูกสินค้า = เทียบกับใครไม่ได้
+
+    const sum = sumAdsRange(name, from, to);
+    if (!sum) continue;
+    const v = sum[metricKey];
+    if (v === null || !isFinite(v)) continue;
+
+    if (!byGroup.has(group)) byGroup.set(group, []);
+    byGroup.get(group).push({ campaign: name, product, value: v, sum });
+  }
+
+  const out = [];
+  for (const [group, items] of byGroup) {
+    if (items.length < 2) continue;           // มีตัวเดียวก็ไม่มีอะไรให้เทียบ
+    // ใช้ค่ากลาง (median) ไม่ใช่ค่าเฉลี่ย — ตัวโดดตัวเดียวไม่ควรลากเส้นฐาน
+    const sorted = items.map(i => i.value).sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    const median = sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+    const better = BENCH_METRICS[metricKey].better;
+    out.push({
+      group, median,
+      items: items.map(i => ({
+        ...i,
+        pct: median ? round((i.value - median) / median * 100, 1) : 0,
+        worse: better === 'down' ? i.value > median : i.value < median
+      })).sort((a, b) => better === 'down' ? b.value - a.value : a.value - b.value)
+    });
+  }
+  return out.sort((a, b) => b.items.length - a.items.length);
+}
+
+function renderBenchmark() {
+  const host = $('#benchList');
+  const sel = $('#benchMetric');
+  if (!host || !sel) return;
+  if (!sel.dataset.bound) {
+    sel.dataset.bound = '1';
+    sel.addEventListener('change', () => renderBenchmark());
+  }
+  const key = sel.value || 'cpa';
+  const spec = BENCH_METRICS[key];
+  host.innerHTML = '';
+
+  const groups = groupBenchmark(key);
+  if (!groups.length) {
+    host.append(el('div', { class: 'empty' },
+      el('strong', {}, 'ยังเทียบไม่ได้'),
+      'ต้องมีอย่างน้อย 2 แคมเปญที่ผูกสินค้าอยู่ในกลุ่มเดียวกัน และมีตัวเลขในช่วงที่เลือก — ' +
+      'ผูกสินค้าให้แคมเปญได้ที่หน้า "บันทึกใหม่" หรือหน้าตั้งค่า'));
+    return;
+  }
+
+  for (const g of groups) {
+    const tbl = el('table', { class: 'data' },
+      el('thead', {}, el('tr', {},
+        el('th', { class: 'table-left' }, 'แคมเปญ'),
+        el('th', { class: 'table-left' }, 'สินค้า'),
+        el('th', { class: 'num' }, spec.label),
+        el('th', { class: 'num' }, 'ต่างจากค่ากลาง'),
+        el('th', { class: 'num' }, 'Cost'),
+        el('th', { class: 'num' }, 'Conv'))),
+      el('tbody', {}, g.items.map(i => {
+        const off = Math.abs(i.pct);
+        // ห่างจากค่ากลางเกิน 25% ถือว่าน่าไปดู
+        const flag = off >= 25 && i.worse;
+        return el('tr', { class: flag ? 'row-warn' : '' },
+          el('td', { class: 'table-left' }, el('b', {}, i.campaign)),
+          el('td', { class: 'table-left cell-sub' }, i.product),
+          el('td', { class: 'num val-strong' }, fmt(i.value, spec.dec) + spec.unit),
+          el('td', { class: 'num ' + (off < 5 ? 'delta-flat' : i.worse ? 'delta-down' : 'delta-up') },
+            (i.pct > 0 ? '+' : '') + fmt(i.pct, 0) + '%',
+            flag ? el('span', { title: 'ห่างจากค่ากลางของกลุ่มมาก — น่าเข้าไปดู' }, ' ⚠') : null),
+          el('td', { class: 'num' }, fmt(i.sum.cost, 0)),
+          el('td', { class: 'num' }, fmt(i.sum.conversions, 2)));
+      })));
+
+    host.append(el('div', { class: 'bench-group' },
+      el('div', { class: 'section-label' },
+        `${g.group} · ${g.items.length} แคมเปญ · ` +
+        (g.items.length === 2 ? 'จุดกึ่งกลางของสองตัว ' : `ค่ากลาง ${spec.label} `) +
+        `${fmt(g.median, spec.dec)}${spec.unit}`),
+      el('div', { class: 'table-wrap' }, tbl)));
+  }
+  host.append(el('p', { class: 'card-note', style: 'margin-top:10px' },
+    'ใช้ค่ากลาง (median) เป็นเส้นฐาน ไม่ใช่ค่าเฉลี่ย — แคมเปญที่โดดไปตัวเดียวจะได้ไม่ลากเส้นฐานตามไปด้วย · ' +
+    '⚠ = ห่างจากค่ากลางเกิน 25% ในทางที่แย่กว่า'));
+}
+
+/* ─────────────────────────────────────────────────────────────
+   10a-10. วันไหนของสัปดาห์แพงกว่ากัน
+   ───────────────────────────────────────────────────────────── */
+
+const WEEKDAY_TH = ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์', 'เสาร์'];
+
+function weekdayStats(rows) {
+  const buckets = WEEKDAY_TH.map((name, i) => ({
+    i, name, days: new Set(), impressions: 0, clicks: 0, cost: 0, conversions: 0
+  }));
+  for (const m of rows) {
+    const d = parseDate(m.date);
+    if (!d) continue;
+    const b = buckets[d.getDay()];
+    b.days.add(String(m.date));
+    b.impressions += num(m.impressions) || 0;
+    b.clicks += num(m.clicks) || 0;
+    b.cost += num(m.cost) || 0;
+    b.conversions += num(m.conversions) || 0;
+  }
+  return buckets.filter(b => b.days.size).map(b => ({
+    ...b,
+    dayCount: b.days.size,
+    ctr: b.impressions ? round(b.clicks / b.impressions * 100, 2) : null,
+    cpc: b.clicks ? round(b.cost / b.clicks, 2) : null,
+    cvr: b.clicks ? round(b.conversions / b.clicks * 100, 2) : null,
+    cpa: b.conversions ? round(b.cost / b.conversions, 2) : null
+  }));
+}
+
+function renderWeekdayTable() {
+  const tbl = $('#dowTable');
+  if (!tbl) return;
+  const tb = tbl.querySelector('tbody');
+  tb.innerHTML = '';
+
+  const hint = $('#dowHint');
+  if (hint) hint.innerHTML = '';
+  const rows = weekdayStats(spendRows());
+  const withCpa = rows.filter(r => r.cpa !== null);
+  // เส้นฐานคำนวณจากยอดรวมทั้งช่วง ไม่ใช่เฉลี่ยของ CPA รายวัน
+  const totCost = rows.reduce((s, r) => s + r.cost, 0);
+  const totConv = rows.reduce((s, r) => s + r.conversions, 0);
+  const baseCpa = totConv ? totCost / totConv : null;
+
+  $('#dowNote').textContent = baseCpa === null
+    ? 'ยังไม่มี conversion พอจะเทียบ CPA'
+    : `CPA เฉลี่ยทั้งช่วง ${fmt(baseCpa, 2)} ฿ · เทียบแต่ละวันกับค่านี้`;
+
+  if (!rows.length) {
+    tb.append(el('tr', {}, el('td', { colspan: '8' },
+      el('div', { class: 'empty' }, el('strong', {}, 'ยังไม่มีข้อมูล'),
+        'เลือกช่วงเวลาที่มีตัวเลขจาก Google Ads'))));
+    return;
+  }
+
+  for (const r of rows) {
+    const diff = baseCpa && r.cpa !== null ? (r.cpa - baseCpa) / baseCpa * 100 : null;
+    // CPA ต่ำกว่าค่าเฉลี่ย = ดี
+    const cls = diff === null ? '' : Math.abs(diff) < 5 ? 'delta-flat' : diff < 0 ? 'delta-up' : 'delta-down';
+    tb.append(el('tr', { class: diff !== null && diff >= 25 ? 'row-warn' : '' },
+      el('td', { class: 'table-left' }, el('b', {}, r.name)),
+      el('td', { class: 'num' }, String(r.dayCount)),
+      el('td', { class: 'num' }, fmt(r.cost, 0)),
+      el('td', { class: 'num' }, fmt(r.clicks, 0)),
+      el('td', { class: 'num' }, fmt(r.conversions, 2)),
+      el('td', { class: 'num val-strong' }, r.cpa === null ? '—' : fmt(r.cpa, 2)),
+      el('td', { class: 'num' }, r.cvr === null ? '—' : fmt(r.cvr, 2) + '%'),
+      el('td', { class: 'num ' + cls }, diff === null ? '—' : (diff > 0 ? '+' : '') + fmt(diff, 0) + '%')));
+  }
+
+  if (withCpa.length >= 5) {
+    const worst = withCpa.slice().sort((a, b) => b.cpa - a.cpa)[0];
+    const best = withCpa.slice().sort((a, b) => a.cpa - b.cpa)[0];
+    if (hint && best.cpa > 0 && worst.cpa / best.cpa >= 1.3) {
+      hint.append(el('p', { class: 'card-note', style: 'margin-top:10px' },
+        `วัน${worst.name} CPA แพงกว่าวัน${best.name} อยู่ ${fmt((worst.cpa / best.cpa - 1) * 100, 0)}% — ` +
+        'ถ้าช่องว่างนี้ยังอยู่หลายสัปดาห์ ลองปรับตารางเวลาแสดงโฆษณาดู'));
+    }
+  }
+}
+
 function copySpend(kind) {
   const rows = spendRows();
   const total = spendTotals(rows);
@@ -3493,7 +4088,7 @@ const BID_STRATEGY_TH = {
   TARGET_ROAS: 'Target ROAS',
   TARGET_SPEND: 'Maximize clicks',
   MAXIMIZE_CONVERSIONS: 'Maximize conversions',
-  MAXIMIZE_CONVERSION_VALUE: 'Maximize conv. value',
+  MAXIMIZE_CONVERSION_VALUE: 'Maximize conversion value',
   TARGET_IMPRESSION_SHARE: 'Target impression share'
 };
 
@@ -3510,6 +4105,243 @@ function strategyLabel(row) {
 /** แคมเปญนี้ bid เองหรือเปล่า — ถ้าไม่ Max CPC จะไม่มีความหมาย */
 function isManualBidding(row) {
   return !!row && /^(MANUAL_CPC|ENHANCED_CPC|MANUAL_CPM|MANUAL_CPV)$/.test(String(row.bid_strategy || ''));
+}
+
+/** กลยุทธ์ที่ "ตั้งเพดาน CPC ได้" — Google คุม bid ให้ แต่เราสั่งห้ามเกินได้ */
+function hasCpcCeiling(row) {
+  return !!row && /^(TARGET_SPEND|TARGET_IMPRESSION_SHARE|PERCENT_CPC)$/.test(String(row.bid_strategy || ''));
+}
+
+/**
+ * "ค่าที่ตั้งไว้" ของแคมเปญ — ความหมายเปลี่ยนตามกลยุทธ์ bid
+ *
+ * ที่ต้องทำแบบนี้เพราะ ad_group.cpc_bid_micros มีความหมายเฉพาะแคมเปญที่ bid เอง
+ * แคมเปญ smart bidding จะได้ค่า default ของ Google ติดมา (0.01 / 0.10 เท่ากันหมด)
+ * ซึ่งไม่ใช่ค่าที่ใครตั้ง เอามาโชว์ก็หลอกตาเปล่า ๆ
+ *
+ * @param ads    แถวล่าสุดจากชีต METRICS
+ * @param manual ค่าที่ผู้ใช้กรอกเอง (จาก latestSetting) — ใช้เมื่อ Ads ไม่มีข้อมูล
+ */
+function bidSetting(ads, manual) {
+  const mv = manual ? num(manual.value) : null;
+
+  if (!ads) {
+    return mv === null
+      ? { kind: 'none', label: '', text: '—', title: 'ยังไม่มีข้อมูลจาก Google Ads และยังไม่เคยกรอกเอง' }
+      : { kind: 'manual', label: 'Max CPC', value: mv, text: fmt(mv, 2) + ' ฿', title: 'ค่าที่กรอกเอง' };
+  }
+
+  if (isManualBidding(ads)) {
+    const v = num(ads.max_cpc);
+    if (v !== null) {
+      return { kind: 'manual', label: 'Max CPC', value: v, text: fmt(v, 2) + ' ฿', fromAds: true,
+        title: 'แคมเปญนี้ตั้ง bid เอง — นี่คือ Max CPC สูงสุดของ ad group' };
+    }
+    return mv === null
+      ? { kind: 'none', label: 'Max CPC', text: '—', title: 'ยังไม่ได้ตั้ง Max CPC' }
+      : { kind: 'manual', label: 'Max CPC', value: mv, text: fmt(mv, 2) + ' ฿', title: 'ค่าที่กรอกเอง' };
+  }
+
+  if (hasCpcCeiling(ads)) {
+    const v = num(ads.cpc_ceiling);
+    if (v !== null) {
+      return { kind: 'ceiling', label: 'เพดาน CPC', value: v, text: fmt(v, 2) + ' ฿', fromAds: true,
+        title: 'Google คุม bid ให้ แต่ห้ามประมูลเกินค่านี้' };
+    }
+    if (mv !== null) {
+      return { kind: 'ceiling', label: 'เพดาน CPC', value: mv, text: fmt(mv, 2) + ' ฿',
+        title: 'ค่าที่กรอกเอง — Google Ads ไม่ได้ส่งเพดานมา' };
+    }
+    return { kind: 'uncapped', label: 'เพดาน CPC', text: 'ไม่จำกัด',
+      title: 'แคมเปญนี้ไม่ได้ตั้งเพดาน CPC ไว้ — Google ประมูลได้เต็มที่ตามที่เห็นสมควร' };
+  }
+
+  const cpa = num(ads.target_cpa);
+  if (cpa !== null) {
+    return { kind: 'tcpa', label: 'เป้า CPA', value: cpa, text: fmt(cpa, 2) + ' ฿', fromAds: true,
+      title: 'Google เล็งให้ได้ conversion ที่ราคาประมาณนี้' };
+  }
+  const roas = num(ads.target_roas);
+  if (roas !== null) {
+    return { kind: 'troas', label: 'เป้า ROAS', value: roas, text: fmt(roas * 100, 0) + '%', fromAds: true,
+      title: 'Google เล็งให้ได้มูลค่าคืนกลับตามสัดส่วนนี้' };
+  }
+  return { kind: 'auto', label: '', text: 'Google คุมเอง',
+    title: 'แคมเปญนี้ไม่มีค่า bid ให้ตั้ง — Google ตัดสินใจให้ทั้งหมด' };
+}
+
+/* ─────────────────────────────────────────────────────────────
+   10a-6. ความน่าเชื่อของผลวัด
+
+   ปัญหาที่แก้: ถ้าช่วงหลังปรับมี conversion แค่ 3 ครั้ง แล้ว CPA ดีขึ้น 20%
+   นั่นไม่ได้แปลว่าการปรับได้ผล — มันคือความบังเอิญที่เกิดได้เอง
+   ระบบจึงต้องบอกตรง ๆ ว่า "ยังตัดสินไม่ได้" แทนที่จะขึ้นลูกศรเขียวให้เข้าใจผิด
+
+   เกณฑ์ที่ใช้ (ตัวเลขกลม ๆ ที่ใช้กันทั่วไปในวงการ ไม่ใช่การทดสอบทางสถิติเต็มรูป)
+     conversion  < 10  ต่อฝั่ง = ตัดสินไม่ได้เลย
+     conversion  < 25  ต่อฝั่ง = พอเห็นทิศทาง แต่ยังไม่ควรฟันธง
+     clicks      < 100 ต่อฝั่ง = อัตราส่วน (CTR/CVR) ยังแกว่งมาก
+   ───────────────────────────────────────────────────────────── */
+
+const CONF_CONV_MIN = 10;
+const CONF_CONV_GOOD = 25;
+const CONF_CLICK_MIN = 100;
+
+const CONF_TEXT = {
+  high:   { label: 'ข้อมูลพอ', cls: 'conf-high' },
+  medium: { label: 'ข้อมูลพอประมาณ', cls: 'conf-mid' },
+  low:    { label: 'ข้อมูลยังน้อย', cls: 'conf-low' },
+  none:   { label: 'ยังไม่มีข้อมูลพอ', cls: 'conf-low' }
+};
+
+/**
+ * ประเมินว่าผลเทียบนี้เชื่อได้แค่ไหน
+ * คืน { level, conv, clicks, need, reason } — need = ยังขาด conversion อีกกี่ครั้ง
+ */
+function blockConfidence(beforeRaw, afterRaw) {
+  const B = solveBlock(beforeRaw).values;
+  const A = solveBlock(afterRaw).values;
+
+  const convs = [B.conversions, A.conversions].map(v => (v === null ? null : Number(v)));
+  const clicks = [B.clicks, A.clicks].map(v => (v === null ? null : Number(v)));
+
+  if (convs.some(v => v === null)) {
+    return { level: 'none', conv: null, clicks: null, need: null,
+      reason: 'ยังไม่ได้กรอก Conversions ทั้งสองฝั่ง จึงตัดสินเรื่อง CPA/CVR ไม่ได้' };
+  }
+
+  const minConv = Math.min(...convs);
+  const minClick = clicks.some(v => v === null) ? null : Math.min(...clicks);
+
+  if (minConv < CONF_CONV_MIN) {
+    // ใช้อัตราต่อวันประเมินว่าต้องรออีกกี่วัน
+    const perDay = afterRaw._days ? (A.conversions || 0) / afterRaw._days : 0;
+    const need = CONF_CONV_MIN - minConv;
+    return {
+      level: 'low', conv: minConv, clicks: minClick, need,
+      waitDays: perDay > 0 ? Math.ceil(need / perDay) : null,
+      reason: `ฝั่งที่น้อยที่สุดมี conversion แค่ ${fmt(minConv, 2)} ครั้ง — ` +
+        `ต่ำกว่า ${CONF_CONV_MIN} ครั้ง ความต่างที่เห็นอาจเป็นความบังเอิญล้วน ๆ`
+    };
+  }
+  if (minConv < CONF_CONV_GOOD) {
+    return { level: 'medium', conv: minConv, clicks: minClick, need: CONF_CONV_GOOD - minConv,
+      reason: `มี conversion ${fmt(minConv, 2)} ครั้ง — พอเห็นทิศทาง แต่ยังไม่ควรฟันธง ` +
+        `(ประมาณ ${CONF_CONV_GOOD} ครั้งขึ้นไปถึงจะมั่นใจได้)` };
+  }
+  if (minClick !== null && minClick < CONF_CLICK_MIN) {
+    return { level: 'medium', conv: minConv, clicks: minClick, need: 0,
+      reason: `conversion พอแล้ว แต่คลิกยังน้อย (${fmt(minClick, 0)}) — CTR กับ CVR ยังแกว่งได้อีก` };
+  }
+  return { level: 'high', conv: minConv, clicks: minClick, need: 0, reason: '' };
+}
+
+/** แถบเตือนใต้คำตัดสิน — โผล่เฉพาะตอนข้อมูลยังไม่พอ */
+function confidenceNote(beforeRaw, afterRaw) {
+  const c = blockConfidence(beforeRaw, afterRaw);
+  if (c.level === 'high') return null;
+  const wait = c.waitDays
+    ? ` · ถ้าอัตราปัจจุบันคงที่ อีกประมาณ ${c.waitDays} วันจะมีข้อมูลพอ`
+    : '';
+  return el('div', { class: `conf-note ${CONF_TEXT[c.level].cls}` },
+    el('b', {}, CONF_TEXT[c.level].label),
+    ' ' + c.reason + wait);
+}
+
+/* ─────────────────────────────────────────────────────────────
+   10a-7. ความผันผวนปกติของแคมเปญเอง
+
+   ปัญหาที่แก้: แคมเปญที่ CPA แกว่าง ±15% อยู่ทุกอาทิตย์โดยไม่ต้องทำอะไร
+   ถ้าปรับแล้วดีขึ้น 8% นั่นยังอยู่ในกรอบความมั่วของมันเอง ไม่ใช่ผลงาน
+   ───────────────────────────────────────────────────────────── */
+
+/**
+ * กรอบความแกว่งรายสัปดาห์ของแคมเปญ วัดจากข้อมูลจริงในชีต METRICS
+ * เทียบเป็นก้อนละ 7 วันเพราะรายวันแกว่งเกินจนไม่มีความหมาย
+ * คืน { pct, weeks } — pct = ค่าเบี่ยงเบนเฉลี่ยของ CPA ระหว่างสัปดาห์ (%)
+ */
+function weeklyNoise(campaign, metricKey = 'cpa', weeks = 8) {
+  if (!hasAdsData()) return null;
+  const upTo = adsDataUpTo();
+  if (!upTo) return null;
+
+  const vals = [];
+  for (let w = 0; w < weeks; w++) {
+    const to = toISO(new Date(parseDate(upTo).getTime() - w * 7 * 864e5));
+    const from = toISO(new Date(parseDate(to).getTime() - 6 * 864e5));
+    const s = sumAdsRange(campaign, from, to);
+    if (!s || s.days < 5) continue;
+    const v = s[metricKey];
+    if (v === null || !isFinite(v) || v <= 0) continue;
+    vals.push(v);
+  }
+  if (vals.length < 3) return null;
+
+  const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+  if (!mean) return null;
+  // ค่าเบี่ยงเบนสัมบูรณ์เฉลี่ย — ทนต่อค่าโดดกว่าส่วนเบี่ยงเบนมาตรฐาน
+  const mad = vals.reduce((a, b) => a + Math.abs(b - mean), 0) / vals.length;
+  const pct = round(mad / mean * 100, 1);
+  // แกว่งต่ำกว่า 1% = ข้อมูลนิ่งจนผิดธรรมชาติ (มักเจอตอนข้อมูลทดสอบ)
+  // เอามาเป็นเส้นฐานจะทำให้ทุกความเปลี่ยนแปลงดู "เกินกรอบ" ไปหมด จึงไม่ใช้ดีกว่า
+  if (pct < 1) return null;
+  return { pct, weeks: vals.length, mean: round(mean, 2), metricKey };
+}
+
+/** ผลที่วัดได้ ใหญ่กว่าความมั่วปกติของแคมเปญไหม */
+function noiseVerdict(campaign, deltaPct, metricKey = 'cpa') {
+  const n = weeklyNoise(campaign, metricKey);
+  if (!n || deltaPct === null) return null;
+  const size = Math.abs(deltaPct);
+  return {
+    ...n,
+    beyond: size > n.pct,
+    text: size > n.pct
+      ? `เปลี่ยน ${fmt(size, 1)}% ซึ่งมากกว่าที่แคมเปญนี้แกว่งเองปกติ (±${fmt(n.pct, 1)}%) — น่าจะเป็นผลจริง`
+      : `เปลี่ยนแค่ ${fmt(size, 1)}% แต่แคมเปญนี้แกว่งเองอยู่แล้ว ±${fmt(n.pct, 1)}% ต่อสัปดาห์ — ยังแยกไม่ออกว่าเป็นผลของการปรับ`
+  };
+}
+
+/* ─────────────────────────────────────────────────────────────
+   10a-8. งบตัน / งบเหลือ
+
+   ใช้จริงยังไง: แคมเปญที่ใช้งบเต็มทุกวัน = ถูกงบบีบอยู่ เพิ่มงบคือคันโยกที่ถูกตัว
+   ส่วนแคมเปญที่ใช้ไม่ถึงครึ่ง เพิ่มงบไปก็ไม่มีอะไรเกิดขึ้น ต้องไปแก้ที่อื่นแทน
+   ───────────────────────────────────────────────────────────── */
+
+const PACE_CAPPED = 92;      // ใช้งบเกิน 92% ของงบต่อวัน = ตัน
+const PACE_IDLE = 60;        // ใช้ไม่ถึง 60% = งบเหลือ
+
+function budgetPacing(campaign, days = 14) {
+  if (!hasAdsData()) return null;
+  const upTo = adsDataUpTo();
+  if (!upTo) return null;
+  const from = toISO(new Date(parseDate(upTo).getTime() - (days - 1) * 864e5));
+
+  let spend = 0, budgetSum = 0, n = 0, full = 0;
+  for (const m of Store.metrics || []) {
+    if (String(m.campaign || '').trim() !== campaign) continue;
+    const d = String(m.date || '');
+    if (d < from || d > upTo) continue;
+    const b = num(m.budget), c = num(m.cost);
+    if (b === null || b <= 0 || c === null) continue;
+    spend += c; budgetSum += b; n++;
+    if (c / b >= PACE_CAPPED / 100) full++;
+  }
+  if (!n) return null;
+
+  const pct = round(spend / budgetSum * 100, 1);
+  const level = pct >= PACE_CAPPED ? 'capped' : pct <= PACE_IDLE ? 'idle' : 'ok';
+  return {
+    pct, days: n, fullDays: full, level,
+    avgSpend: round(spend / n, 2),
+    avgBudget: round(budgetSum / n, 2),
+    text: level === 'capped'
+      ? `ใช้งบเกือบเต็มทุกวัน (${fmt(pct, 0)}% · เต็ม ${full}/${n} วัน) — ถูกงบบีบอยู่ เพิ่มงบน่าจะได้ผลตรงที่สุด`
+      : level === 'idle'
+        ? `ใช้งบแค่ ${fmt(pct, 0)}% ของที่ตั้งไว้ — เพิ่มงบไปก็ไม่ช่วย ปัญหาอยู่ที่อื่น (bid ต่ำ / คนค้นน้อย / โฆษณาไม่ผ่าน)`
+        : `ใช้งบ ${fmt(pct, 0)}% ของที่ตั้งไว้ — กำลังพอดี`
+  };
 }
 
 function hasAdsData() { return Array.isArray(Store.metrics) && Store.metrics.length > 0; }
@@ -3589,7 +4421,10 @@ function latestSetting(campaign, key) {
   // งบมาจาก Google Ads ตรง ๆ ถือว่าแม่นกว่าที่กรอกมือเสมอ
   const ads = latestAdsRow(campaign);
   if (ads) {
-    const fromAds = num(ads[key === 'bid' ? 'max_cpc' : key]);
+    // max_cpc เชื่อได้เฉพาะแคมเปญที่ bid เอง — สคริปต์รุ่นเก่าเคยส่งค่า default
+    // ของ Google (0.01 / 0.10) ติดมาด้วย จึงต้องกรองซ้ำอีกชั้นตรงนี้
+    const skipBid = key === 'bid' && !isManualBidding(ads);
+    const fromAds = skipBid ? null : num(ads[key === 'bid' ? 'max_cpc' : key]);
     if (fromAds !== null) return { value: fromAds, date: String(ads.date || ''), fromAds: true };
   }
 
@@ -3763,11 +4598,13 @@ function renderBudgetPage() {
     const oldest = [r.budget?.date, r.bid?.date].filter(Boolean).sort()[0];
     const age = oldest ? daysBetween(oldest, today) : null;
     const stale = !auto && age !== null && age > 30;
-    const overBid = r.bid && r.cpc !== null && r.cpc > r.bid.value * 1.05;
 
-    const cell = (setting, dec, unit) => setting
-      ? el('td', { class: 'num val-strong' }, fmt(setting.value, dec) + unit)
-      : el('td', { class: 'num val-none' }, '—');
+    const set = bidSetting(r.ads, r.bid);
+    // เตือนเฉพาะตอนที่ค่าที่ตั้งเป็น "เพดาน" จริง ๆ — เป้า CPA/ROAS เทียบกับ CPC ไม่ได้
+    const capLike = set.kind === 'manual' || set.kind === 'ceiling';
+    const overBid = capLike && set.value && r.cpc !== null && r.cpc > set.value * 1.05;
+    const pace = budgetPacing(r.campaign);
+
     const when = setting => {
       if (!setting) return el('td', { class: 'val-none' }, 'ยังไม่เคยตั้ง');
       if (!setting.date) return el('td', { class: 'val-none' }, 'ไม่ทราบวันที่');
@@ -3785,23 +4622,31 @@ function renderBudgetPage() {
     tbody.append(el('tr', { class: stale ? 'row-warn' : '' },
       el('td', {}, el('b', {}, r.campaign)),
       el('td', {}, r.product || '—'),
-      cell(r.budget, 0, ' ฿'),
-      when(r.budget),
+      r.budget
+        ? el('td', { class: 'num val-strong' }, fmt(r.budget.value, 0) + ' ฿')
+        : el('td', { class: 'num val-none' }, '—'),
+      pace
+        ? el('td', {}, el('span', { class: `pace pace-${pace.level}`, title: pace.text },
+            `${fmt(pace.pct, 0)}%`,
+            el('span', { class: 'pace-tag' },
+              pace.level === 'capped' ? ' ตัน' : pace.level === 'idle' ? ' เหลือ' : ' พอดี')))
+        : el('td', { class: 'val-none' }, '—'),
       el('td', {}, r.strategy
         ? el('span', { class: 'src-ads' }, strategyLabel(r.ads))
         : el('span', { class: 'val-none' }, '—')),
-      // Max CPC มีความหมายเฉพาะแคมเปญที่ bid เอง
-      (r.ads && !isManualBidding(r.ads) && !r.bid)
-        ? el('td', { class: 'num val-none', title: 'แคมเปญนี้ใช้ smart bidding — Google คุม bid ให้ ไม่มี Max CPC รายตัว' }, 'ไม่ใช้')
-        : cell(r.bid, 2, ' ฿'),
-      (r.ads && !isManualBidding(r.ads) && !r.bid)
-        ? el('td', { class: 'val-none' }, '—')
-        : when(r.bid),
+      el('td', {
+        class: 'num' + (set.kind === 'none' || set.kind === 'auto' || set.kind === 'uncapped'
+          ? ' val-none' : ' val-strong'),
+        title: set.title
+      },
+        set.text,
+        set.label ? el('span', { class: 'cell-sub' }, set.label) : null),
       r.cpc === null
         ? el('td', { class: 'num val-none' }, '—')
         : el('td', { class: 'num' + (overBid ? ' delta-down' : '') },
             fmt(r.cpc, 2) + ' ฿',
-            overBid ? el('span', { title: 'CPC จริงสูงกว่า Max CPC ที่ตั้งไว้' }, ' ⚠') : null),
+            overBid ? el('span', { title: `CPC จริงสูงกว่า${set.label}ที่ตั้งไว้` }, ' ⚠') : null),
+      when(r.budget),
       el('td', {},
         el('button', {
           class: 'btn btn-sm', onclick: () => Settings.open(r)
@@ -5145,11 +5990,12 @@ function updateConnBadge() {
 function refreshAll() {
   updateConnBadge();
   updateGreeting();
+  updateInboxBadge();
   Form.buildTaxonomySelects();
   Form.refreshCampaignList();
   syncCampaignSelects();
   if (!$('#panel-data').hidden) { renderTaxonomyEditor(); renderConnStatusBox(); }
-  if (!$('#panel-timeline').hidden) renderTimeline();
+  if (!$('#panel-timeline').hidden) { renderInbox(); renderTimeline(); }
   if (!$('#panel-dashboard').hidden) renderDashboard();
   if (!$('#panel-trend').hidden) renderTrend();
   if (!$('#panel-spend').hidden) renderSpendPage();
