@@ -1388,3 +1388,6 @@ input.from-ads { border-color: color-mix(in srgb, var(--accent-solid) 40%, var(-
 
 /* ป้ายกำกับใต้ตัวเลขในช่อง "ค่าที่ตั้งไว้" — ต้องอยู่คนละบรรทัด ไม่งั้นเบียดกับตัวเลข */
 td.num .cell-sub { display: block; margin-top: 2px; line-height: 1.4; }
+
+/* ชื่อ event ของ GA4 เป็นชื่อเฉพาะ (Add Line / click_facebook) ห้ามบังคับเป็นตัวพิมพ์ใหญ่ */
+.data th.as-is { text-transform: none; letter-spacing: 0; }
