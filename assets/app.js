@@ -8,7 +8,7 @@
    1. ค่าคงที่
    ───────────────────────────────────────────────────────────── */
 
-const APP_VERSION = '1.17.0';
+const APP_VERSION = '1.16.0';
 const LS_CONFIG = 'aar.config.v1';
 
 /* ═══════════════════════════════════════════════════════════════
@@ -540,8 +540,6 @@ const Store = {
   config: { url: '', token: '' },
   records: [],
   campaigns: [],
-  metrics: [],
-  leads: [],
   rev: 0,                 // เพิ่มทุกครั้งที่ข้อมูลเปลี่ยน ใช้ล้างแคชรอบวัดผล
   online: false,
   status: 'local',        // local | connecting | online | error
@@ -603,20 +601,18 @@ const Store = {
       this.rev++;
       this.campaigns = Array.isArray(raw.campaigns) ? raw.campaigns : [];
       this.metrics = Array.isArray(raw.metrics) ? raw.metrics : [];
-      this.leads = Array.isArray(raw.leads) ? raw.leads : [];
       if (Array.isArray(raw.products) && raw.products.length) Taxonomy.set(raw.products);
     } catch {
       this.records = [];
       this.campaigns = [];
       this.metrics = [];
-      this.leads = [];
     }
   },
   saveCache() {
     try {
       localStorage.setItem(LS_CACHE, JSON.stringify({
         records: this.records, campaigns: this.campaigns, products: Taxonomy.list,
-        metrics: this.metrics, leads: this.leads, savedAt: new Date().toISOString()
+        metrics: this.metrics, savedAt: new Date().toISOString()
       }));
     } catch (e) {
       toast('พื้นที่เก็บในเบราว์เซอร์เต็ม — แนะนำให้เชื่อม Google Sheet');
@@ -754,7 +750,6 @@ const Store = {
       if (Array.isArray(data.products) && data.products.length) Taxonomy.set(data.products);
       this.campaigns = mergeCampaigns(this.campaigns, data.campaigns || []);
       if (Array.isArray(data.metrics)) this.metrics = data.metrics;
-      if (Array.isArray(data.leads)) this.leads = data.leads;
       this.serverVersion = String(data.version || '');
       this.records = (data.records || []).map(normalizeRecord);
       this.rev++;
@@ -907,9 +902,8 @@ function versionAtLeast(have, want) {
 }
 
 /** ชีตยังไม่รู้จักคอลัมน์ที่เวอร์ชันนี้ต้องใช้หรือเปล่า
- *  1.3.0 = budget/bid · 1.5.0 = ชีต METRICS · 1.6.0 = cpc_ceiling + auto_key
- *  1.7.0 = ชีต LEADS (GA4) + อ่าน API_TOKEN จาก Script Properties */
-const SHEET_MIN_VERSION = '1.7.0';
+ *  1.3.0 = budget/bid · 1.5.0 = ชีต METRICS · 1.6.0 = cpc_ceiling + auto_key */
+const SHEET_MIN_VERSION = '1.6.0';
 function sheetNeedsUpgrade() {
   if (!Store.online || !Store.serverVersion) return false;
   return !versionAtLeast(Store.serverVersion, SHEET_MIN_VERSION);
@@ -952,7 +946,7 @@ function normalizeRecord(raw) {
    5. แท็บ
    ───────────────────────────────────────────────────────────── */
 
-const PANELS = ['new', 'timeline', 'dashboard', 'trend', 'spend', 'budget', 'leads', 'data'];
+const PANELS = ['new', 'timeline', 'dashboard', 'trend', 'spend', 'budget', 'data'];
 
 function showTab(name) {
   for (const p of PANELS) {
@@ -968,7 +962,6 @@ function showTab(name) {
   if (name === 'trend') renderTrend();
   if (name === 'spend') renderSpendPage();
   if (name === 'budget') renderBudgetPage();
-  if (name === 'leads') renderLeadPage();
   if (name === 'data') { renderTaxonomyEditor(); renderConnStatusBox(); }
 }
 
@@ -4045,423 +4038,6 @@ function renderWeekdayTable() {
   }
 }
 
-/* ─────────────────────────────────────────────────────────────
-   10a-11. หน้า "ที่มา Lead" — Key events จาก GA4
-
-   ตอบคำถามว่า "ลูกค้าที่ทักมา มาจากทางไหน และทักมาทางไหน"
-     แถว = ที่มาของทราฟฟิก (Organic Search / Paid Search / …)
-     คอลัมน์ = ประเภทที่ติดต่อเข้ามา (Add Line / click_facebook / Call Us)
-
-   ที่ต้องระวังและเขียนกำกับไว้ในหน้า:
-   ตัวเลข GA4 กับ Conversions ของ Google Ads ไม่มีวันตรงกัน เพราะนับคนละแบบ
-   จึงแยกคนละหน้า ไม่เอามาบวกกัน และให้ใช้ GA4 ดู "สัดส่วน" เป็นหลัก
-   ───────────────────────────────────────────────────────────── */
-
-const LEAD_PRESETS = [
-  { key: '7', label: '7 วัน', days: 7 },
-  { key: '14', label: '14 วัน', days: 14 },
-  { key: '30', label: '30 วัน', days: 30 },
-  { key: '90', label: '90 วัน', days: 90 },
-  { key: 'all', label: 'ทั้งหมด', days: 0 }
-];
-
-/** ชื่อช่องทางของ GA4 เป็นภาษาอังกฤษ — แปลเฉพาะตัวที่เจอบ่อย */
-const CHANNEL_TH = {
-  'Organic Search': 'Organic Search (SEO)',
-  'Paid Search': 'Paid Search (SEM)',
-  'Paid Social': 'Paid Social',
-  'Organic Social': 'Organic Social',
-  'Direct': 'Direct (พิมพ์ URL เอง)',
-  'Referral': 'Referral (เว็บอื่นส่งมา)',
-  'Email': 'Email',
-  'Display': 'Display',
-  'Unassigned': 'ระบุที่มาไม่ได้'
-};
-const channelLabel = c => CHANNEL_TH[c] || c || 'ไม่ระบุ';
-
-function hasLeadData() { return Array.isArray(Store.leads) && Store.leads.length > 0; }
-
-function leadDataUpTo() {
-  let latest = '';
-  for (const l of Store.leads || []) {
-    const d = String(l.date || '');
-    if (d > latest) latest = d;
-  }
-  return latest;
-}
-
-function leadRows() {
-  const from = $('#lead_from')?.value, to = $('#lead_to')?.value;
-  const ch = $('#leadChannel')?.value || '';
-  return (Store.leads || []).filter(l => {
-    const d = String(l.date || '');
-    if (!d) return false;
-    if (from && d < from) return false;
-    if (to && d > to) return false;
-    if (ch && String(l.channel || '') !== ch) return false;
-    return true;
-  });
-}
-
-const leadCount = l => num(l.key_events) || 0;
-
-/** รายชื่อประเภท event เรียงตามจำนวนมากไปน้อย */
-function leadEventNames(rows) {
-  const tally = new Map();
-  for (const l of rows) {
-    const n = String(l.event_name || '').trim();
-    if (!n) continue;
-    tally.set(n, (tally.get(n) || 0) + leadCount(l));
-  }
-  return [...tally.entries()].sort((a, b) => b[1] - a[1]).map(([n]) => n);
-}
-
-/** ตารางไขว้ ช่องทาง × ประเภท */
-function leadPivot(rows) {
-  const events = leadEventNames(rows);
-  const byChannel = new Map();
-  for (const l of rows) {
-    const c = String(l.channel || '') || 'ไม่ระบุ';
-    if (!byChannel.has(c)) byChannel.set(c, { channel: c, total: 0, cells: {} });
-    const e = byChannel.get(c);
-    const name = String(l.event_name || '').trim();
-    const v = leadCount(l);
-    e.cells[name] = (e.cells[name] || 0) + v;
-    e.total += v;
-  }
-  const list = [...byChannel.values()].sort((a, b) => b.total - a.total);
-  const totals = { total: 0, cells: {} };
-  for (const r of list) {
-    totals.total += r.total;
-    for (const e of events) totals.cells[e] = (totals.cells[e] || 0) + (r.cells[e] || 0);
-  }
-  return { events, rows: list, totals };
-}
-
-function leadByDay(rows) {
-  const byDate = new Map();
-  for (const l of rows) {
-    const d = String(l.date);
-    if (!byDate.has(d)) byDate.set(d, { date: d, total: 0, cells: {} });
-    const e = byDate.get(d);
-    const name = String(l.event_name || '').trim();
-    const v = leadCount(l);
-    e.cells[name] = (e.cells[name] || 0) + v;
-    e.total += v;
-  }
-  return [...byDate.values()].sort((a, b) => b.date.localeCompare(a.date));
-}
-
-/**
- * ต้นทุนต่อ lead รายแคมเปญ — จับคู่ชื่อแคมเปญของ GA4 กับ Cost จากชีต METRICS
- * จะมีข้อมูลก็ต่อเมื่อ GA4 ผูกกับ Google Ads และเปิด auto-tagging ไว้
- */
-function leadByCampaign(rows) {
-  const from = $('#lead_from')?.value, to = $('#lead_to')?.value;
-  const byName = new Map();
-  for (const l of rows) {
-    const n = String(l.campaign || '').trim();
-    if (!n) continue;
-    if (!byName.has(n)) byName.set(n, { campaign: n, leads: 0, byEvent: {} });
-    const e = byName.get(n);
-    const v = leadCount(l);
-    e.leads += v;
-    const name = String(l.event_name || '').trim();
-    e.byEvent[name] = (e.byEvent[name] || 0) + v;
-  }
-
-  const out = [];
-  for (const e of byName.values()) {
-    const spend = sumAdsRange(e.campaign, from, to);
-    const recs = Store.sorted().filter(r => r.campaign === e.campaign);
-    out.push({
-      ...e,
-      product: recs.length ? recProduct(recs[0]) : (Store.campaign(e.campaign)?.product || ''),
-      cost: spend ? spend.cost : null,
-      cpl: spend && e.leads ? round(spend.cost / e.leads, 2) : null,
-      matched: !!spend
-    });
-  }
-  return out.sort((a, b) => b.leads - a.leads);
-}
-
-function setLeadRange(days) {
-  const upTo = leadDataUpTo() || todayISO();
-  $('#lead_to').value = upTo;
-  if (!days) {
-    let first = upTo;
-    for (const l of Store.leads || []) {
-      const d = String(l.date || '');
-      if (d && d < first) first = d;
-    }
-    $('#lead_from').value = first;
-  } else {
-    const d = new Date(upTo);
-    d.setDate(d.getDate() - (days - 1));
-    $('#lead_from').value = d.toLocaleDateString('sv-SE');
-  }
-}
-
-function initLeadPage() {
-  const presets = $('#leadPresets');
-  if (!presets) return;
-  presets.innerHTML = '';
-  for (const p of LEAD_PRESETS) {
-    presets.append(el('button', {
-      type: 'button', class: 'chip', 'data-preset': p.key,
-      'aria-pressed': String(p.key === '30'),
-      onclick: () => {
-        $$('#leadPresets .chip').forEach(c =>
-          c.setAttribute('aria-pressed', String(c.dataset.preset === p.key)));
-        setLeadRange(p.days);
-        renderLeadPage();
-      }
-    }, p.label));
-  }
-  for (const id of ['#lead_from', '#lead_to', '#leadChannel']) {
-    $(id)?.addEventListener('change', () => {
-      if (id !== '#leadChannel') {
-        $$('#leadPresets .chip').forEach(c => c.setAttribute('aria-pressed', 'false'));
-      }
-      renderLeadPage();
-    });
-  }
-  $('#leadCopyPivot')?.addEventListener('click', () => copyLeads('pivot'));
-  $('#leadCopyCamp')?.addEventListener('click', () => copyLeads('campaign'));
-  $('#leadCopyDay')?.addEventListener('click', () => copyLeads('day'));
-  setLeadRange(30);
-}
-
-function renderLeadPage() {
-  const warn = $('#leadWarn');
-  if (!warn) return;
-  warn.innerHTML = '';
-
-  const clear = () => {
-    $('#leadStats').innerHTML = '';
-    for (const id of ['#leadPivotTable', '#leadCampTable', '#leadDayTable']) {
-      const t = $(id);
-      if (!t) continue;
-      t.querySelector('thead tr').innerHTML = '';
-      t.querySelector('tbody').innerHTML = '';
-      if (t.querySelector('tfoot')) t.querySelector('tfoot').innerHTML = '';
-    }
-  };
-
-  if (!hasLeadData()) {
-    warn.append(el('div', { class: 'banner warn' },
-      el('span', { class: 'icon' }, '📊'),
-      el('span', {},
-        el('b', {}, 'ยังไม่มีข้อมูลจาก Google Analytics '),
-        'หน้านี้จะมีข้อมูลเมื่อเพิ่มไฟล์ ', el('code', {}, 'GA4Leads.gs'),
-        ' เข้าไปใน Apps Script แล้วตั้งให้รันวันละครั้ง — ดูขั้นตอนใน README',
-        el('div', { class: 'card-note', style: 'margin-top:6px' },
-          'สรุปสั้น ๆ: เปิด Services → เพิ่ม Google Analytics Data API → ใส่ Property ID → รัน setupLeads แล้ว pullLeads'))));
-    clear();
-    return;
-  }
-
-  // ตัวเลือกช่องทาง
-  const sel = $('#leadChannel');
-  const keep = sel.value;
-  const channels = [...new Set((Store.leads || []).map(l => String(l.channel || '')).filter(Boolean))].sort();
-  sel.innerHTML = '';
-  sel.append(el('option', { value: '' }, 'ทุกช่องทาง'));
-  for (const c of channels) sel.append(el('option', { value: c }, channelLabel(c)));
-  sel.value = channels.includes(keep) ? keep : '';
-
-  const rows = leadRows();
-  const pivot = leadPivot(rows);
-  const upTo = leadDataUpTo();
-
-  warn.append(el('div', { class: 'banner good' },
-    el('span', { class: 'icon' }, '📊'),
-    el('span', {}, 'ข้อมูลจาก Google Analytics · ล่าสุดถึงวันที่ ', el('b', {}, thaiDate(upTo)),
-      ' · นับจาก Key events ที่ตั้งไว้ใน GA4')));
-
-  // ── การ์ดสรุป
-  const days = new Set(rows.map(r => String(r.date))).size;
-  const paid = pivot.rows.find(r => r.channel === 'Paid Search');
-  const organic = pivot.rows.find(r => r.channel === 'Organic Search');
-  const topEvent = pivot.events[0];
-  const stats = $('#leadStats');
-  stats.innerHTML = '';
-  const cards = [
-    { cls: 'c3', icon: 'up', label: 'Lead ทั้งหมด', value: fmt(pivot.totals.total, 0), unit: '',
-      active: true, sub: days ? `${days} วัน · เฉลี่ย ${fmt(pivot.totals.total / days, 1)}/วัน` : '' },
-    { cls: 'c1', icon: 'edit', label: 'จาก Paid Search (SEM)', value: fmt(paid?.total || 0, 0), unit: '',
-      ring: pivot.totals.total ? (paid?.total || 0) / pivot.totals.total * 100 : null,
-      sub: pivot.totals.total ? `${fmt((paid?.total || 0) / pivot.totals.total * 100, 0)}% ของทั้งหมด` : '' },
-    { cls: 'c4', icon: 'up', label: 'จาก Organic Search (SEO)', value: fmt(organic?.total || 0, 0), unit: '',
-      ring: pivot.totals.total ? (organic?.total || 0) / pivot.totals.total * 100 : null,
-      sub: pivot.totals.total ? `${fmt((organic?.total || 0) / pivot.totals.total * 100, 0)}% ของทั้งหมด` : '' },
-    { cls: 'c1', icon: 'clock', label: 'ประเภทที่มามากสุด', value: topEvent || '—', unit: '',
-      sub: topEvent ? `${fmt(pivot.totals.cells[topEvent] || 0, 0)} ครั้ง` : '' }
-  ];
-  for (const c of cards) {
-    stats.append(el('div', { class: `stat-card ${c.cls}${c.active ? ' is-active' : ''}` },
-      el('div', { class: 'sc-body' },
-        el('div', { class: 'sc-label' }, c.label),
-        statValue(c.value, c.unit),
-        el('div', { class: 'sc-sub' }, c.sub)),
-      (c.ring !== undefined && c.ring !== null) ? statRing(c.ring) : svgIcon(c.icon)));
-  }
-
-  renderLeadPivot(pivot);
-  renderLeadCampaigns(rows);
-  renderLeadDays(rows, pivot.events);
-}
-
-function renderLeadPivot(pivot) {
-  const tbl = $('#leadPivotTable');
-  const head = tbl.querySelector('thead tr');
-  const tb = tbl.querySelector('tbody');
-  const tf = tbl.querySelector('tfoot');
-  head.innerHTML = ''; tb.innerHTML = ''; tf.innerHTML = '';
-
-  head.append(el('th', {}, 'ช่องทาง'));
-  for (const e of pivot.events) head.append(el('th', { class: 'num as-is' }, e));
-  head.append(el('th', { class: 'num' }, 'รวม'));
-  head.append(el('th', { class: 'num' }, '% ของทั้งหมด'));
-
-  if (!pivot.rows.length) {
-    tb.append(el('tr', {}, el('td', { colspan: String(pivot.events.length + 3) },
-      el('div', { class: 'empty' }, el('strong', {}, 'ไม่มีข้อมูลในช่วงนี้'),
-        'ลองขยายช่วงเวลา หรือเอาตัวกรองช่องทางออก'))));
-    return;
-  }
-
-  for (const r of pivot.rows) {
-    const pct = pivot.totals.total ? r.total / pivot.totals.total * 100 : 0;
-    tb.append(el('tr', {},
-      el('td', {}, el('b', {}, channelLabel(r.channel))),
-      ...pivot.events.map(e => el('td', { class: 'num' + ((r.cells[e] || 0) ? '' : ' val-none') },
-        (r.cells[e] || 0) ? fmt(r.cells[e], 0) : '—')),
-      el('td', { class: 'num val-strong' }, fmt(r.total, 0)),
-      el('td', { class: 'num cell-sub' }, fmt(pct, 1) + '%')));
-  }
-
-  tf.append(el('tr', { class: 'row-total' },
-    el('td', {}, 'รวมทุกช่องทาง'),
-    ...pivot.events.map(e => el('td', { class: 'num' }, fmt(pivot.totals.cells[e] || 0, 0))),
-    el('td', { class: 'num val-strong' }, fmt(pivot.totals.total, 0)),
-    el('td', { class: 'num' }, '100%')));
-}
-
-function renderLeadCampaigns(rows) {
-  const tbl = $('#leadCampTable');
-  const tb = tbl.querySelector('tbody');
-  const tf = tbl.querySelector('tfoot');
-  tb.innerHTML = ''; tf.innerHTML = '';
-
-  const list = leadByCampaign(rows);
-  const note = $('#leadCostNote');
-
-  if (!list.length) {
-    note.textContent = 'GA4 ยังไม่ได้ส่งชื่อแคมเปญมา';
-    tb.append(el('tr', {}, el('td', { colspan: '6' },
-      el('div', { class: 'empty' },
-        el('strong', {}, 'ยังแยกรายแคมเปญไม่ได้'),
-        'GA4 จะส่งชื่อแคมเปญมาก็ต่อเมื่อลิงก์บัญชี Google Ads เข้ากับ GA4 และเปิด auto-tagging ไว้ ' +
-        '(GA4 → Admin → Product links → Google Ads links) · ' +
-        'ถ้าลิงก์แล้วแต่ยังไม่ขึ้น ให้รอ 24–48 ชม. แล้วรัน pullLeads อีกครั้ง'))));
-    return;
-  }
-
-  const unmatched = list.filter(r => !r.matched).length;
-  note.textContent = unmatched
-    ? `จับคู่ Cost ได้ ${list.length - unmatched} จาก ${list.length} แคมเปญ — ที่เหลือชื่อไม่ตรงกับในชีต METRICS`
-    : 'จับคู่ชื่อแคมเปญของ GA4 กับ Cost จาก Google Ads ครบทุกตัว';
-
-  let sumCost = 0, sumLeads = 0;
-  for (const r of list) {
-    if (r.cost !== null) sumCost += r.cost;
-    sumLeads += r.leads;
-    const top = Object.entries(r.byEvent).sort((a, b) => b[1] - a[1]).slice(0, 3);
-    tb.append(el('tr', {},
-      el('td', {}, el('b', {}, r.campaign)),
-      el('td', {}, r.product || '—'),
-      r.cost === null
-        ? el('td', { class: 'num val-none', title: 'ไม่มีแคมเปญชื่อนี้ในชีต METRICS' }, '—')
-        : el('td', { class: 'num' }, fmt(r.cost, 0)),
-      el('td', { class: 'num val-strong' }, fmt(r.leads, 0)),
-      r.cpl === null
-        ? el('td', { class: 'num val-none' }, '—')
-        : el('td', { class: 'num val-strong' }, fmt(r.cpl, 2) + ' ฿'),
-      el('td', { class: 'cell-sub' },
-        top.map(([n, v]) => `${n} ${fmt(v, 0)}`).join(' · ') || '—')));
-  }
-
-  tf.append(el('tr', { class: 'row-total' },
-    el('td', {}, 'รวม'),
-    el('td', {}, ''),
-    el('td', { class: 'num' }, fmt(sumCost, 0)),
-    el('td', { class: 'num val-strong' }, fmt(sumLeads, 0)),
-    // ค่าเฉลี่ยคิดจากยอดรวม ไม่ใช่เฉลี่ยของ CPL รายแคมเปญ
-    el('td', { class: 'num val-strong' }, sumLeads ? fmt(sumCost / sumLeads, 2) + ' ฿' : '—'),
-    el('td', {}, '')));
-}
-
-function renderLeadDays(rows, events) {
-  const tbl = $('#leadDayTable');
-  const head = tbl.querySelector('thead tr');
-  const tb = tbl.querySelector('tbody');
-  const tf = tbl.querySelector('tfoot');
-  head.innerHTML = ''; tb.innerHTML = ''; tf.innerHTML = '';
-
-  head.append(el('th', { class: 'table-left' }, 'วันที่'));
-  for (const e of events) head.append(el('th', { class: 'num as-is' }, e));
-  head.append(el('th', { class: 'num' }, 'รวม'));
-
-  const days = leadByDay(rows);
-  $('#leadDayNote').textContent = days.length ? `${days.length} วัน · ใหม่อยู่บน` : '';
-
-  for (const d of days) {
-    tb.append(el('tr', {},
-      el('td', { class: 'table-left' }, thaiDate(d.date),
-        el('span', { class: 'cell-sub' }, ' ' + relativeDay(d.date))),
-      ...events.map(e => el('td', { class: 'num' + ((d.cells[e] || 0) ? '' : ' val-none') },
-        (d.cells[e] || 0) ? fmt(d.cells[e], 0) : '—')),
-      el('td', { class: 'num val-strong' }, fmt(d.total, 0))));
-  }
-
-  const tot = { total: 0, cells: {} };
-  for (const d of days) {
-    tot.total += d.total;
-    for (const e of events) tot.cells[e] = (tot.cells[e] || 0) + (d.cells[e] || 0);
-  }
-  tf.append(el('tr', { class: 'row-total' },
-    el('td', { class: 'table-left' }, `รวม ${days.length} วัน`),
-    ...events.map(e => el('td', { class: 'num' }, fmt(tot.cells[e] || 0, 0))),
-    el('td', { class: 'num val-strong' }, fmt(tot.total, 0))));
-}
-
-function copyLeads(kind) {
-  const rows = leadRows();
-  const pivot = leadPivot(rows);
-  let text = '';
-
-  if (kind === 'pivot') {
-    text = ['ช่องทาง', ...pivot.events, 'รวม'].join('\t') + '\n' +
-      pivot.rows.map(r => [channelLabel(r.channel),
-        ...pivot.events.map(e => r.cells[e] || 0), r.total].join('\t')).join('\n') +
-      '\n' + ['รวมทุกช่องทาง', ...pivot.events.map(e => pivot.totals.cells[e] || 0),
-        pivot.totals.total].join('\t');
-  } else if (kind === 'campaign') {
-    const list = leadByCampaign(rows);
-    text = ['แคมเปญ', 'สินค้า', 'Cost', 'Lead', 'Cost/Lead'].join('\t') + '\n' +
-      list.map(r => [r.campaign, r.product, r.cost ?? '', r.leads, r.cpl ?? ''].join('\t')).join('\n');
-  } else {
-    const days = leadByDay(rows);
-    text = ['วันที่', ...pivot.events, 'รวม'].join('\t') + '\n' +
-      days.map(d => [d.date, ...pivot.events.map(e => d.cells[e] || 0), d.total].join('\t')).join('\n');
-  }
-
-  navigator.clipboard.writeText(text)
-    .then(() => toast('คัดลอกแล้ว — วางในชีตได้เลย'))
-    .catch(() => toast('คัดลอกไม่สำเร็จ'));
-}
-
 function copySpend(kind) {
   const rows = spendRows();
   const total = spendTotals(rows);
@@ -6424,7 +6000,6 @@ function refreshAll() {
   if (!$('#panel-trend').hidden) renderTrend();
   if (!$('#panel-spend').hidden) renderSpendPage();
   if (!$('#panel-budget').hidden) renderBudgetPage();
-  if (!$('#panel-leads').hidden) renderLeadPage();
 }
 
 /** ลูกศรขึ้น/ลงเลื่อนเมนูซ้าย — พฤติกรรมมาตรฐานของ role="tablist" */
@@ -6484,8 +6059,8 @@ function initShortcuts(help) {
     if (e.key === 't' || e.key === 'T') {
       e.preventDefault(); $('#dailyDate').value = todayISO(); showTab('dashboard'); return;
     }
-    // ตัวเลข = สลับแท็บ ตามลำดับใน PANELS
-    const idx = PANELS.map((_, i) => String(i + 1)).indexOf(e.key);
+    // 1-7 = สลับแท็บ
+    const idx = ['1', '2', '3', '4', '5', '6', '7'].indexOf(e.key);
     if (idx >= 0) { e.preventDefault(); showTab(PANELS[idx]); }
   });
 }
@@ -6518,7 +6093,6 @@ async function boot() {
   initSettings();
   initDailyCard();
   initSpendPage();
-  initLeadPage();
   initBudgetPage();
   initSidebar();
   initTablistKeys();
