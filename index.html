@@ -8,10 +8,43 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="assets/styles.css?v=1.19.0">
+<link rel="stylesheet" href="assets/styles.css?v=1.20.0">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%232a78d6'/><path d='M8 22 L13 14 L18 18 L24 9' stroke='white' stroke-width='2.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
 </head>
 <body>
+
+<!-- ═══ หน้ากรอกรหัสผ่าน ═══
+     ซ่อนไว้ตั้งแต่แรกเพื่อไม่ให้กะพริบตอนโหลด เว็บที่ไม่ได้ตั้งรหัสจะไม่เห็นหน้านี้เลย
+     ตัวจริงที่กันคืออยู่ฝั่งเซิร์ฟเวอร์ (/api/sheet ตอบ 401) หน้านี้เป็นแค่ที่ให้กรอก -->
+<div class="lockscreen" id="lockScreen" hidden>
+  <form class="lock-card" id="lockForm" autocomplete="on">
+    <div class="lock-mark" aria-hidden="true">AR</div>
+    <h1>Ads Adjust Record</h1>
+    <p class="lock-sub">กรอกรหัสผ่านของทีมเพื่อเข้าใช้งาน</p>
+
+    <label class="field" for="lockPassword">
+      <span class="field-label">รหัสผ่าน</span>
+      <div class="lock-input">
+        <input type="password" id="lockPassword" name="password" required
+               autocomplete="current-password" enterkeyhint="go"
+               aria-describedby="lockMsg" spellcheck="false">
+        <button type="button" class="lock-eye" id="lockEye"
+                aria-label="แสดงรหัสผ่าน" aria-pressed="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M1.5 12S5.5 5 12 5s10.5 7 10.5 7-4 7-10.5 7S1.5 12 1.5 12Z"/><circle cx="12" cy="12" r="3"/></svg>
+        </button>
+      </div>
+    </label>
+
+    <p class="lock-msg" id="lockMsg" role="status" aria-live="polite"></p>
+
+    <button type="submit" class="btn btn-primary lock-submit" id="lockSubmit">เข้าใช้งาน</button>
+
+    <p class="lock-foot">
+      จำการเข้าระบบไว้ 30 วันในเบราว์เซอร์เครื่องนี้ ·
+      ลืมรหัสให้ถามคนที่ตั้งค่า Cloudflare
+    </p>
+  </form>
+</div>
 
 <button class="scrim" id="navScrim" hidden aria-hidden="true"></button>
 
@@ -36,6 +69,7 @@
     <button class="nav-item" role="tab" id="tab-trend" aria-controls="panel-trend" aria-selected="false" tabindex="-1"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M23 6l-9.5 9.5-5-5L1 18"/><path d="M17 6h6v6"/></svg><span>กราฟเทรนด์</span><kbd class="nav-key">4</kbd></button>
     <button class="nav-item" role="tab" id="tab-spend" aria-controls="panel-spend" aria-selected="false" tabindex="-1"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20h18"/><rect x="5" y="11" width="3.5" height="7" rx="1"/><rect x="10.25" y="7" width="3.5" height="11" rx="1"/><rect x="15.5" y="13" width="3.5" height="5" rx="1"/></svg><span>ตัวเลขรายวัน</span><kbd class="nav-key">5</kbd></button>
     <button class="nav-item" role="tab" id="tab-budget" aria-controls="panel-budget" aria-selected="false" tabindex="-1"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="6" width="19" height="13" rx="2.5"/><path d="M2.5 10.5h19"/><path d="M6.5 15h3"/></svg><span>งบ &amp; Bid</span><kbd class="nav-key">6</kbd></button>
+    <button class="nav-item" role="tab" id="tab-changes" aria-controls="panel-changes" aria-selected="false" tabindex="-1"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 2.6-6.4"/><path d="M3 4v5h5"/><path d="M12 8v4.5l3 1.8"/></svg><span>การปรับใน Google Ads</span><span class="nav-badge" id="changeBadge" hidden></span><kbd class="nav-key">7</kbd></button>
     <button class="nav-item" role="tab" id="tab-leads" aria-controls="panel-leads" aria-selected="false" tabindex="-1"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 20v-1.5a4 4 0 0 0-4-4H6.5a4 4 0 0 0-4 4V20"/><circle cx="9.25" cy="7" r="3.5"/><path d="M17.5 11.5 19.5 13.5 23 10"/></svg><span>ที่มา Lead</span><kbd class="nav-key">7</kbd></button>
     <span class="nav-label">ระบบ</span>
     <button class="nav-item" role="tab" id="tab-data" aria-controls="panel-data" aria-selected="false" tabindex="-1"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg><span>ตั้งค่า</span><kbd class="nav-key">8</kbd></button>
@@ -513,6 +547,45 @@
 </section>
 
 <!-- ══════════════ 6. งบ & Bid ปัจจุบัน ══════════════ -->
+<!-- ═══ การปรับใน Google Ads — ประวัติการแก้ไขจริงที่ดึงมาจากบัญชี ═══ -->
+<section class="panel" id="panel-changes" role="tabpanel" aria-labelledby="tab-changes" hidden>
+  <div class="panel-head">
+    <div>
+      <h2>การปรับใน Google Ads</h2>
+      <p class="panel-sub">ทุกอย่างที่มีคนเข้าไปกดแก้ในบัญชีจริง ดึงมาจากประวัติของ Google โดยตรง</p>
+    </div>
+  </div>
+
+  <div id="changeWarn"></div>
+
+  <div class="filterbar" id="changeFilters">
+    <label class="field w-sm">
+      <span class="field-label">ย้อนหลัง</span>
+      <select id="changeDays">
+        <option value="7">7 วัน</option>
+        <option value="14" selected>14 วัน</option>
+        <option value="30">30 วัน</option>
+        <option value="0">ทั้งหมดที่มี</option>
+      </select>
+    </label>
+    <label class="field w-md">
+      <span class="field-label">แคมเปญ</span>
+      <select id="changeCampaign"><option value="">ทุกแคมเปญ</option></select>
+    </label>
+    <label class="field w-md">
+      <span class="field-label">ประเภทการปรับ</span>
+      <select id="changeCategory"><option value="">ทุกประเภท</option></select>
+    </label>
+    <label class="field w-md">
+      <span class="field-label">ค้นหาในรายละเอียด</span>
+      <input type="search" id="changeSearch" placeholder="เช่น ราคาถูก, งบ, bid">
+    </label>
+  </div>
+
+  <div id="changeSummary"></div>
+  <div id="changeList"></div>
+</section>
+
 <section class="panel" id="panel-budget" role="tabpanel" aria-labelledby="tab-budget" hidden>
   <div id="budgetWarn"></div>
   <div class="stat-row" id="budgetStats"></div>
@@ -883,6 +956,6 @@
   </div>
 </dialog>
 
-<script src="assets/app.js?v=1.19.0"></script>
+<script src="assets/app.js?v=1.20.0"></script>
 </body>
 </html>
