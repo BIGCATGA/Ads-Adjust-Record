@@ -8,8 +8,48 @@
    1. ค่าคงที่
    ───────────────────────────────────────────────────────────── */
 
-const APP_VERSION = '1.16.0';
+const APP_VERSION = '1.19.0';
 const LS_CONFIG = 'aar.config.v1';
+
+/* ═══════════════════════════════════════════════════════════════
+   สวิตช์เปิด/ปิดระบบเสริม
+
+   สองระบบนี้ "ปิดอยู่" — โค้ดยังอยู่ครบ แค่ไม่ทำงานและไม่โผล่ในเมนู
+   เปิดกลับได้เองที่หน้า ตั้งค่า → กล่อง "ระบบเสริม" ไม่ต้องแก้โค้ด ไม่ต้องอัปไฟล์ใหม่
+
+     ads = ดึงตัวเลขรายวันจาก Google Ads (ชีต METRICS)
+           คุมหน้า "ตัวเลขรายวัน" · กล่อง "งานที่รอ" ในไทม์ไลน์ ·
+           ปุ่มเติมตัวเลขอัตโนมัติ · งบ/ค่า bid ที่ดึงจาก Ads · สถานะงบตัน
+
+     ga4 = ดึง Lead จาก Google Analytics (ชีต LEADS)
+           คุมหน้า "ที่มา Lead"
+
+   ปิดอยู่ = แอปไม่แตะข้อมูลสองก้อนนี้เลย ต่อให้ในชีตมีข้อมูลอยู่ก็ตาม
+   (ข้อมูลเดิมในชีตไม่ถูกลบ เปิดกลับเมื่อไหร่ก็เห็นเหมือนเดิม)
+   ═══════════════════════════════════════════════════════════════ */
+
+const LS_FEATURES = 'aar.features.v1';
+const DEFAULT_FEATURES = {
+  ads: true,       // ระบบ Google Ads — ใช้งานอยู่
+  ga4: false       // ระบบ GA4 — ยังไม่เปิด (ติดเรื่องสิทธิ์เข้าถึง property)
+};
+
+function loadFeatures() {
+  try {
+    return { ...DEFAULT_FEATURES, ...JSON.parse(localStorage.getItem(LS_FEATURES) || '{}') };
+  } catch {
+    return { ...DEFAULT_FEATURES };
+  }
+}
+
+const FEATURES = loadFeatures();
+
+function setFeature(key, on) {
+  const next = { ...loadFeatures(), [key]: !!on };
+  try { localStorage.setItem(LS_FEATURES, JSON.stringify(next)); } catch { /* เต็มก็ช่างมัน */ }
+  // เมนูกับหน้าต่าง ๆ ถูกประกอบตั้งแต่ตอนโหลด — โหลดใหม่ง่ายและแน่นอนกว่าไล่ประกอบใหม่ทีละจุด
+  location.reload();
+}
 
 /* ═══════════════════════════════════════════════════════════════
    การเชื่อมต่อ
@@ -533,6 +573,90 @@ const VERDICT_TEXT = {
 };
 
 /* ─────────────────────────────────────────────────────────────
+   แปลผลเทียบเป็นประโยคภาษาคน
+
+   ทำไมต้องมี: ตารางเปอร์เซ็นต์กับลูกศรขึ้นลงอ่านแล้วต้องแปลในหัวเองทุกครั้ง
+   ว่า "CPA ▼ 12% แปลว่าดีหรือแย่" ฟังก์ชันนี้เขียนคำตอบออกมาตรง ๆ
+   แล้วเอาไปใช้ซ้ำได้ทุกที่ — ป๊อปอัพวัดผล ไทม์ไลน์ ป๊อปอัพดูตัวเลข
+   จะได้พูดภาษาเดียวกันหมด ไม่ใช่แต่ละหน้าพูดคนละแบบ
+   ───────────────────────────────────────────────────────────── */
+
+/** ชื่อเรียกสั้น ๆ ที่คนพูดกันจริง — ไม่ใช่ศัพท์ในระบบ */
+const METRIC_PLAIN = {
+  cpa: { name: 'ค่าใช้จ่ายต่อ 1 conversion', down: 'ถูกลง', up: 'แพงขึ้น' },
+  conversions: { name: 'จำนวน conversion', down: 'ลดลง', up: 'เพิ่มขึ้น' },
+  cvr: { name: 'อัตราปิดการขาย', down: 'ลดลง', up: 'ดีขึ้น' },
+  ctr: { name: 'อัตราคนคลิก', down: 'ลดลง', up: 'ดีขึ้น' },
+  cpc: { name: 'ค่าคลิก', down: 'ถูกลง', up: 'แพงขึ้น' },
+  impr_share: { name: 'ส่วนแบ่งการมองเห็น', down: 'ลดลง', up: 'เพิ่มขึ้น' },
+  clicks: { name: 'จำนวนคลิก', down: 'ลดลง', up: 'เพิ่มขึ้น' },
+  impressions: { name: 'จำนวนครั้งที่แสดง', down: 'ลดลง', up: 'เพิ่มขึ้น' },
+  cost: { name: 'ค่าใช้จ่าย', down: 'ลดลง', up: 'เพิ่มขึ้น' }
+};
+
+/** ตัวชี้วัดที่ขยับแรงสุดและมีความหมาย — เอาไว้เล่าว่า "ที่ตัดสินแบบนี้เพราะอะไร" */
+function topMovers(cmp, n = 2) {
+  return cmp.rows
+    .filter(r => r.deltaPct !== null && r.good !== null && Math.abs(r.deltaPct) >= 2)
+    .filter(r => VERDICT_WEIGHTS[r.key])
+    .sort((a, b) => (VERDICT_WEIGHTS[b.key] * Math.abs(b.deltaPct)) -
+                    (VERDICT_WEIGHTS[a.key] * Math.abs(a.deltaPct)))
+    .slice(0, n);
+}
+
+function moverPhrase(r) {
+  const p = METRIC_PLAIN[r.key] || { name: r.metric.label, down: 'ลดลง', up: 'เพิ่มขึ้น' };
+  const word = r.dir === 'down' ? p.down : p.up;
+  const from = r.before === null ? null : fmtMetric(r.key, r.before);
+  const to = r.after === null ? null : fmtMetric(r.key, r.after);
+  const nums = (from && to) ? ` (${from} → ${to})` : '';
+  return `${p.name} ${word} ${fmt(Math.abs(r.deltaPct), 0)}%${nums}`;
+}
+
+/**
+ * สรุปผลเป็นประโยคเดียว
+ * คืน { level, headline, detail } — level ใช้เลือกสี: good / bad / flat / unsure
+ */
+function plainVerdict(cmp, beforeRaw, afterRaw) {
+  if (!cmp) return null;
+  const conf = (beforeRaw && afterRaw) ? blockConfidence(beforeRaw, afterRaw) : null;
+  const movers = topMovers(cmp);
+  const detail = movers.length
+    ? movers.map(moverPhrase).join(' · ')
+    : 'ตัวเลขแทบไม่ขยับจากเดิม';
+
+  // ข้อมูลน้อยเกินไป = ไม่ตัดสิน ต่อให้ตัวเลขจะดูดีแค่ไหนก็ตาม
+  if (conf && (conf.level === 'low' || conf.level === 'none')) {
+    return {
+      level: 'unsure',
+      headline: 'ยังตัดสินไม่ได้ — ข้อมูลน้อยเกินไป',
+      detail: movers.length ? `ตัวเลขที่เห็น: ${detail} · แต่ยังเชื่อไม่ได้` : detail
+    };
+  }
+
+  const map = {
+    up: { level: 'good', headline: 'การปรับรอบนี้ได้ผล' },
+    down: { level: 'bad', headline: 'การปรับรอบนี้ทำให้แย่ลง' },
+    flat: { level: 'flat', headline: 'การปรับรอบนี้แทบไม่เปลี่ยนอะไร' },
+    pending: { level: 'flat', headline: 'ยังเทียบไม่ได้' }
+  };
+  const base = map[cmp.verdict] || map.pending;
+  return { ...base, detail };
+}
+
+/** กล่องสรุปผลแบบอ่านรู้เรื่องทันที ใช้แทน/นำหน้าตารางเปอร์เซ็นต์ */
+function verdictSummary(cmp, beforeRaw, afterRaw) {
+  const v = plainVerdict(cmp, beforeRaw, afterRaw);
+  if (!v) return null;
+  const ICON = { good: '✓', bad: '✕', flat: '＝', unsure: '?' };
+  return el('div', { class: `plain-verdict pv-${v.level}` },
+    el('span', { class: 'pv-icon' }, ICON[v.level]),
+    el('div', {},
+      el('div', { class: 'pv-head' }, v.headline),
+      el('div', { class: 'pv-detail' }, v.detail)));
+}
+
+/* ─────────────────────────────────────────────────────────────
    4. ชั้นเก็บข้อมูล (Google Sheet + สำรองในเครื่อง)
    ───────────────────────────────────────────────────────────── */
 
@@ -540,6 +664,8 @@ const Store = {
   config: { url: '', token: '' },
   records: [],
   campaigns: [],
+  metrics: [],
+  leads: [],
   rev: 0,                 // เพิ่มทุกครั้งที่ข้อมูลเปลี่ยน ใช้ล้างแคชรอบวัดผล
   online: false,
   status: 'local',        // local | connecting | online | error
@@ -577,6 +703,32 @@ const Store = {
     this.usingDefault = true;
   },
 
+  /**
+   * เช็กว่าตัวกลาง /api/sheet ใช้ได้แล้วหรือยัง แล้วย้ายกลับมาใช้เองอัตโนมัติ
+   *
+   * ทำไมต้องมี: พอเคยกรอก URL+token เองไว้ตอนตัวกลางยังพัง ค่าที่กรอกจะถูกจำไว้ตลอด
+   * ต่อให้ทีหลังตัวกลางกลับมาใช้ได้แล้วก็ยังยิงผ่านค่าเก่าอยู่ — ต้องมากดปุ่มเองถึงจะเลิก
+   * ตัวนี้เลยแอบเช็กให้เงียบ ๆ ตอนโหลด ถ้าตัวกลางพร้อมก็สลับกลับให้เลย
+   */
+  async autoUseProxy() {
+    if (this.usingDefault || isProxyUrl(this.config.url)) return false;
+    let saved = {};
+    try { saved = JSON.parse(localStorage.getItem(LS_CONFIG) || '{}'); } catch { /* ช่างมัน */ }
+    if (saved.offline) return false;              // เขาเลือกออฟไลน์เอง อย่าไปยุ่ง
+
+    try {
+      const res = await fetch(PROXY_PATH, { method: 'GET', cache: 'no-store' });
+      if (!res.ok) return false;
+      const info = await res.json();
+      if (!info || info.proxy !== 'ads-adjust-record' || !info.configured) return false;
+    } catch {
+      return false;                               // ไม่มีตัวกลาง — ใช้ค่าที่กรอกไว้ต่อไป
+    }
+
+    this.useDefaultConfig();
+    return true;
+  },
+
   /** เลือกไม่ต่อชีต เก็บข้อมูลในเครื่องอย่างเดียว */
   goOffline() {
     localStorage.setItem(LS_CONFIG, JSON.stringify({ offline: true }));
@@ -600,19 +752,21 @@ const Store = {
       this.records = Array.isArray(raw.records) ? raw.records : [];
       this.rev++;
       this.campaigns = Array.isArray(raw.campaigns) ? raw.campaigns : [];
-      this.metrics = Array.isArray(raw.metrics) ? raw.metrics : [];
+      this.metrics = FEATURES.ads && Array.isArray(raw.metrics) ? raw.metrics : [];
+      this.leads = FEATURES.ga4 && Array.isArray(raw.leads) ? raw.leads : [];
       if (Array.isArray(raw.products) && raw.products.length) Taxonomy.set(raw.products);
     } catch {
       this.records = [];
       this.campaigns = [];
       this.metrics = [];
+      this.leads = [];
     }
   },
   saveCache() {
     try {
       localStorage.setItem(LS_CACHE, JSON.stringify({
         records: this.records, campaigns: this.campaigns, products: Taxonomy.list,
-        metrics: this.metrics, savedAt: new Date().toISOString()
+        metrics: this.metrics, leads: this.leads, savedAt: new Date().toISOString()
       }));
     } catch (e) {
       toast('พื้นที่เก็บในเบราว์เซอร์เต็ม — แนะนำให้เชื่อม Google Sheet');
@@ -749,7 +903,9 @@ const Store = {
       // โหลดหมวดหมู่และแคมเปญก่อน เพราะ record อ้างอิงข้อมูลสองอย่างนี้
       if (Array.isArray(data.products) && data.products.length) Taxonomy.set(data.products);
       this.campaigns = mergeCampaigns(this.campaigns, data.campaigns || []);
-      if (Array.isArray(data.metrics)) this.metrics = data.metrics;
+      // ระบบที่ปิดอยู่ = ทิ้งข้อมูลที่ชีตส่งมาไปเลย ไม่เก็บไว้ในหน่วยความจำด้วยซ้ำ
+      if (Array.isArray(data.metrics)) this.metrics = FEATURES.ads ? data.metrics : [];
+      if (Array.isArray(data.leads)) this.leads = FEATURES.ga4 ? data.leads : [];
       this.serverVersion = String(data.version || '');
       this.records = (data.records || []).map(normalizeRecord);
       this.rev++;
@@ -902,8 +1058,10 @@ function versionAtLeast(have, want) {
 }
 
 /** ชีตยังไม่รู้จักคอลัมน์ที่เวอร์ชันนี้ต้องใช้หรือเปล่า
- *  1.3.0 = budget/bid · 1.5.0 = ชีต METRICS · 1.6.0 = cpc_ceiling + auto_key */
-const SHEET_MIN_VERSION = '1.6.0';
+ *  1.3.0 = budget/bid · 1.5.0 = ชีต METRICS · 1.6.0 = cpc_ceiling + auto_key
+ *  1.7.0 = ชีต LEADS (GA4)
+ *  เรียกร้องเท่าที่ระบบที่เปิดอยู่ต้องใช้จริง — ปิดระบบเสริมแล้วไม่ควรมีแถบแดงมากวน */
+const SHEET_MIN_VERSION = FEATURES.ga4 ? '1.7.0' : FEATURES.ads ? '1.6.0' : '1.3.0';
 function sheetNeedsUpgrade() {
   if (!Store.online || !Store.serverVersion) return false;
   return !versionAtLeast(Store.serverVersion, SHEET_MIN_VERSION);
@@ -946,9 +1104,32 @@ function normalizeRecord(raw) {
    5. แท็บ
    ───────────────────────────────────────────────────────────── */
 
-const PANELS = ['new', 'timeline', 'dashboard', 'trend', 'spend', 'budget', 'data'];
+/** หน้าทั้งหมดที่มีในระบบ + ระบบเสริมที่คุมหน้านั้นอยู่ */
+const ALL_PANELS = ['new', 'timeline', 'dashboard', 'trend', 'spend', 'budget', 'leads', 'data'];
+const PANEL_FEATURE = { spend: 'ads', leads: 'ga4' };
+
+/** เหลือเฉพาะหน้าที่เปิดใช้ — ลำดับนี้คือลำดับปุ่มลัดตัวเลขด้วย */
+const PANELS = ALL_PANELS.filter(p => !PANEL_FEATURE[p] || FEATURES[PANEL_FEATURE[p]]);
+
+/** ซ่อนเมนูกับหน้าของระบบที่ปิดอยู่ แล้วไล่เลขปุ่มลัดใหม่ให้ตรงกับที่เหลือ */
+function applyFeatureVisibility() {
+  for (const p of ALL_PANELS) {
+    const on = PANELS.includes(p);
+    const tab = $(`#tab-${p}`), panel = $(`#panel-${p}`);
+    if (tab) tab.hidden = !on;
+    if (panel && !on) panel.hidden = true;
+  }
+  PANELS.forEach((p, i) => {
+    const key = $(`#tab-${p} .nav-key`);
+    if (key) key.textContent = String(i + 1);
+  });
+  const help = $('#shortcutRange');
+  if (help) help.textContent = `1 – ${PANELS.length}`;
+}
 
 function showTab(name) {
+  // ลิงก์เก่า/hash ค้างอาจชี้ไปหน้าที่ปิดอยู่ — เด้งกลับหน้าแรกแทนที่จะพัง
+  if (!PANELS.includes(name)) name = PANELS[0];
   for (const p of PANELS) {
     const tab = $(`#tab-${p}`);
     tab.setAttribute('aria-selected', String(p === name));
@@ -962,7 +1143,8 @@ function showTab(name) {
   if (name === 'trend') renderTrend();
   if (name === 'spend') renderSpendPage();
   if (name === 'budget') renderBudgetPage();
-  if (name === 'data') { renderTaxonomyEditor(); renderConnStatusBox(); }
+  if (name === 'leads') renderLeadPage();
+  if (name === 'data') { renderFeatureToggles(); renderTaxonomyEditor(); renderConnStatusBox(); }
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -2194,6 +2376,10 @@ function renderTimeline() {
         n > 1 ? ` · ผลรวมของการปรับ ${n} ครั้งในรอบนี้` : ''));
     }
 
+    if (cmp && round && round.from && round.to) {
+      const sum = verdictSummary(cmp, block(round.from, 'before'), block(round.to, 'before'));
+      if (sum) { sum.classList.add('pv-slim'); card.append(sum); }
+    }
     if (cmp) {
       const key = cmp.rows.filter(r => ['cpa', 'conversions', 'cvr', 'ctr'].includes(r.key) && r.deltaPct !== null);
       if (key.length) {
@@ -2795,6 +2981,7 @@ function renderRoundList(mode = 'auto') {
         body.append(el('p', { class: 'card-note', style: 'margin-bottom:12px' },
           `ช่วงก่อน ${cmp.bDays} วัน · ช่วงนี้ ${cmp.aDays} วัน — ตัวเลขสะสมถูกแปลงเป็นค่าเฉลี่ยต่อวันก่อนเทียบ`));
       }
+      body.append(verdictSummary(cmp, block(round.from, 'before'), block(round.to, 'before')));
       body.append(deltaTiles(cmp));
       body.append(el('div', { style: 'margin-top:14px' }, deltaTable(cmp)));
     } else if (round.open) {
@@ -2827,6 +3014,67 @@ function renderRoundList(mode = 'auto') {
   });
 }
 
+/**
+ * คู่มือ "ระบบวัดผลทำงานยังไง" — เปิดจากปุ่มในป๊อปอัพวัดผล
+ * เขียนเป็นเรื่องเล่าตามลำดับเวลา ไม่ใช่รายการฟีเจอร์ เพราะสิ่งที่คนงงคือ "ลำดับ"
+ */
+function openMeasureGuide() {
+  const host = $('#viewBody');
+  host.innerHTML = '';
+
+  host.append(el('h2', {}, 'ระบบวัดผลทำงานยังไง'));
+  host.append(el('p', { class: 'card-note' },
+    'อ่านครั้งเดียวจบ — หลังจากนี้จะใช้คล่องเลย'));
+
+  const story = [
+    ['ปัญหาที่ระบบนี้แก้',
+     'งานจริงคือ "ปรับทุกวัน แต่วัดผลเป็นครั้ง ๆ" การจะบอกว่าการปรับวันที่ 3 ได้ผลไหม ' +
+     'ต้องมีตัวเลขก่อนกับหลัง แต่คุณไม่ได้เก็บตัวเลขทุกวัน — ระบบเลยคิดเป็น "รอบ" แทน'],
+    ['รอบ คืออะไร',
+     'ช่วงระหว่างการใส่ตัวเลข 2 ครั้ง = 1 รอบ · การปรับทุกครั้งที่เกิดในช่วงนั้นอยู่ในรอบเดียวกันหมด ' +
+     'ผลที่ได้จึงเป็นผลรวมของทั้งรอบ ไม่ใช่ของครั้งใดครั้งหนึ่ง'],
+    ['ทำไมไม่บอกว่าครั้งไหนได้ผล',
+     'เพราะแยกไม่ได้จริง ๆ ถ้าวันที่ 2 เพิ่ม negative แล้ววันที่ 4 ขึ้นงบ พอ CPA ดีขึ้น ' +
+     'ไม่มีใครรู้ว่าอันไหนทำ — ระบบจึงพูดตรง ๆ ว่า "รอบนี้ปรับ 2 ครั้ง ผลรวมคือดีขึ้น 12%" ' +
+     'ดีกว่าเดาแล้วให้คุณเชื่อผิด ๆ'],
+    ['แล้วจะรู้ได้ยังไงว่าอะไรเวิร์ก',
+     'พอสะสมหลายรอบ ไปดูการ์ด "ประเภทการปรับไหนเวิร์ก" ในแดชบอร์ด — ' +
+     'มันรวมข้ามรอบให้ว่ารอบที่มี negative keywords ต่างจากรอบที่ปรับ bid ยังไง']
+  ];
+
+  const when = [
+    ['ตอนไหนควรกดใส่ตัวเลข',
+     'ไม่ต้องจำเอง — ระบบเตือนให้ที่กล่อง "งานที่รอ" บนหน้าไทม์ไลน์ ' +
+     'เงื่อนไขคือ ปรับไปแล้วเกิน 7 วัน และมี conversion มากพอจะสรุปได้'],
+    ['ต้องกรอกกี่ช่อง',
+     'แค่ 4 ช่อง — Impressions · CTR · CPC · Conversions · ' +
+     'ที่เหลือ (Clicks, Cost, CVR, CPA) ระบบคำนวณให้เอง ' +
+     'และถ้าเปิดระบบ Google Ads ไว้ ระบบจะเติมทั้ง 4 ช่องให้อัตโนมัติเลย'],
+    ['ถ้าตัวเลขดูดีขึ้นแต่ระบบบอกว่าตัดสินไม่ได้',
+     'แปลว่า conversion ในช่วงนั้นน้อยเกิน (ต่ำกว่า 10 ครั้ง) ความต่างที่เห็นอาจเป็นความบังเอิญ ' +
+     'ให้รอเก็บข้อมูลอีกหน่อยแล้วค่อยตัดสิน — ระบบจะบอกด้วยว่าต้องรออีกกี่วัน']
+  ];
+
+  const section = (title, items) => {
+    host.append(el('div', { class: 'section-label', style: 'margin-top:20px' }, title));
+    const box = el('div', { class: 'guide-list' });
+    for (const [h, body] of items) {
+      box.append(el('div', { class: 'guide-item' },
+        el('div', { class: 'gi-head' }, h),
+        el('div', { class: 'gi-body' }, body)));
+    }
+    host.append(box);
+  };
+
+  section('แนวคิด', story);
+  section('ใช้งานจริง', when);
+
+  host.append(el('div', { class: 'btn-row' },
+    el('button', { class: 'btn btn-primary', onclick: () => $('#viewModal').close() }, 'เข้าใจแล้ว')));
+
+  $('#viewModal').showModal();
+}
+
 /** เปิดฟอร์มเต็มพร้อมกล่องตัวเลข — ใช้ตอนอยากแก้ทุกช่อง ไม่ใช่แค่ใส่ตัวเลข */
 function startMeasurement(campaign) {
   Form.reset();
@@ -2853,6 +3101,7 @@ const Measure = {
     buildMetricFields($('#measFields'), 'meas', () => this.onInput());
     $('#measSave').addEventListener('click', e => { e.preventDefault(); this.save(); });
     $('#measCancel').addEventListener('click', e => { e.preventDefault(); $('#measureModal').close(); });
+    $('#measHelp')?.addEventListener('click', e => { e.preventDefault(); openMeasureGuide(); });
     $('#measFull').addEventListener('click', e => {
       e.preventDefault();
       const c = this.campaign;
@@ -2888,6 +3137,7 @@ const Measure = {
     const adj = prev
       ? Store.adjustmentsSince(campaign, prev.date, $('#meas_date').value, null)
       : [];
+    this.adjustments = adj;
     $('#measSub').textContent = prev
       ? `เทียบกับตัวเลขครั้งก่อนวันที่ ${thaiDate(prev.date)}` +
         (adj.length ? ` · ระหว่างนั้นปรับไป ${adj.length} ครั้ง` : ' · ระหว่างนั้นยังไม่มีการปรับ')
@@ -2896,11 +3146,87 @@ const Measure = {
     $('#meas_start').value = prev?.before_end || prev?.date || '';
     $('#meas_end').value = $('#meas_date').value;
 
+    this.renderExplain(prev, adj);
     this.renderBaseline();
+
+    // มีตัวเลขจาก Google Ads ครบช่วงแล้ว = เติมให้เลย ไม่ต้องรอกด
+    // (ยังแก้ทับได้ตามปกติ — แค่ไม่ต้องเริ่มจากช่องว่าง 4 ช่อง)
+    // ต้องเติมก่อนวาดแถบ ไม่งั้นแถบจะยังบอกว่า "กดเพื่อเติม" ทั้งที่เติมไปแล้ว
+    const auto = sumAdsRange(campaign, $('#meas_start').value, $('#meas_end').value);
+    if (auto && auto.days >= 2) {
+      fillFromAds('meas', auto);
+      this.autoFilled = auto.days;
+    } else {
+      this.autoFilled = 0;
+    }
     this.renderPull();
+
     this.onInput();
     $('#measureModal').showModal();
-    setTimeout(() => $('#meas_impressions')?.focus(), 120);
+    setTimeout(() => {
+      const body = $('#measureModal .modal-body');
+      if (body) body.scrollTop = 0;
+      // เติมให้แล้วก็ไม่ต้องเด้งไปที่ช่องกรอก — ให้อ่านคำอธิบายด้านบนก่อน
+      if (!this.autoFilled) $('#meas_impressions')?.focus();
+    }, 120);
+  },
+
+  /**
+   * กล่องอธิบายด้านบน — ตอบ 3 คำถามที่คนถามบ่อยที่สุด
+   *   "รอบนี้คืออะไร" · "จะเทียบกับอะไร" · "ต้องกรอกอะไรบ้าง"
+   */
+  renderExplain(prev, adj) {
+    const host = $('#measExplain');
+    if (!host) return;
+    host.innerHTML = '';
+
+    const today = todayISO();
+    const from = prev?.before_end || prev?.date || '';
+    const waited = from ? daysBetween(from, today) : null;
+
+    const steps = el('div', { class: 'meas-explain' });
+
+    if (!prev) {
+      steps.append(el('div', { class: 'mx-line' },
+        el('b', {}, 'ครั้งนี้เป็นการตั้งต้น '),
+        'แคมเปญนี้ยังไม่เคยใส่ตัวเลข — ชุดนี้จะถูกเก็บไว้เป็นจุดเริ่ม ' +
+        'พอครั้งหน้ามาใส่อีกที ระบบถึงจะเทียบให้ได้ว่าดีขึ้นหรือแย่ลง'));
+    } else {
+      steps.append(el('div', { class: 'mx-line' },
+        el('span', { class: 'mx-num' }, '1'),
+        el('span', {},
+          el('b', {}, 'ระบบจะเทียบ '),
+          `ตัวเลขที่คุณกำลังจะกรอก กับตัวเลขครั้งก่อนของแคมเปญนี้ (${thaiDate(prev.date)})` +
+          (waited !== null ? ` — ห่างกัน ${waited} วัน` : ''))));
+
+      steps.append(el('div', { class: 'mx-line' },
+        el('span', { class: 'mx-num' }, '2'),
+        el('span', {},
+          adj.length
+            ? [el('b', {}, `ระหว่างสองครั้งนี้คุณปรับไป ${adj.length} ครั้ง `),
+               'ผลที่ออกมาคือผลรวมของทั้ง ' + adj.length + ' ครั้ง — ',
+               el('span', { class: 'mx-dim' }, 'ระบบไม่เดาว่าครั้งไหนทำให้ดีขึ้น เพราะแยกไม่ได้จริง')]
+            : [el('b', {}, 'ระหว่างสองครั้งนี้ยังไม่มีการปรับเลย '),
+               el('span', { class: 'mx-dim' }, 'ตัวเลขที่เปลี่ยนจึงเป็นความผันผวนตามธรรมชาติ ไม่ใช่ผลงานของใคร')])));
+    }
+
+    steps.append(el('div', { class: 'mx-line' },
+      el('span', { class: 'mx-num' }, prev ? '3' : '1'),
+      el('span', {},
+        el('b', {}, 'กรอกแค่ 4 ช่อง '),
+        'Impressions · CTR · CPC · Conversions — ที่เหลือ (Clicks, Cost, CVR, CPA) ระบบคำนวณให้เอง')));
+
+    if (adj.length) {
+      const list = el('details', { class: 'mx-adjs' },
+        el('summary', {}, `ดูว่าปรับอะไรไปบ้าง (${adj.length} ครั้ง)`),
+        el('div', { class: 'round-adjs' }, adj.map(a =>
+          el('div', { class: 'adj' },
+            el('b', {}, thaiDate(a.date) + ' — '),
+            String(a.change_detail || '(ไม่ได้ระบุ)').replace(/\s+/g, ' ').slice(0, 140)))));
+      steps.append(list);
+    }
+
+    host.append(steps);
   },
 
   /** แถบ "ดึงตัวเลขจาก Google Ads" — โผล่เฉพาะตอนมีข้อมูลของแคมเปญนี้จริง */
@@ -2922,18 +3248,23 @@ const Measure = {
     }
 
     const short = to > upTo;
+    const filled = this.autoFilled > 0;
     host.append(el('div', { class: 'banner good' },
-      el('span', { class: 'icon' }, '☁️'),
+      el('span', { class: 'icon' }, filled ? '✅' : '☁️'),
       el('span', {},
-        el('b', {}, `มีตัวเลขจาก Google Ads ${sum.days} วัน `),
+        el('b', {}, filled
+          ? `เติมตัวเลข ${sum.days} วันจาก Google Ads ให้แล้ว `
+          : `มีตัวเลขจาก Google Ads ${sum.days} วัน `),
         `(Impr ${fmt(sum.impressions, 0)} · Clicks ${fmt(sum.clicks, 0)} · Cost ${fmt(sum.cost, 2)} ฿ · Conv ${fmt(sum.conversions, 2)})`,
+        filled ? el('div', { class: 'card-note', style: 'margin-top:6px' },
+          'ตรวจดูก่อนกดบันทึก — พิมพ์ทับได้ถ้าอยากแก้') : null,
         short ? el('div', { class: 'card-note', style: 'margin-top:6px' },
           `ข้อมูลมีถึง ${thaiDate(upTo)} — วันหลังจากนั้นยังไม่ถูกดึงมา ตัวเลขจะไม่ครบช่วง`) : null,
         el('div', { style: 'margin-top:9px' },
           el('button', {
-            class: 'btn btn-sm btn-primary', type: 'button', id: 'measPullBtn',
+            class: 'btn btn-sm' + (filled ? '' : ' btn-primary'), type: 'button', id: 'measPullBtn',
             onclick: () => this.applyAds(sum)
-          }, 'เติมตัวเลขให้เลย')))));
+          }, filled ? 'ดึงใหม่อีกครั้ง' : 'เติมตัวเลขให้เลย')))));
   },
 
   /** เอายอดรวมจาก Google Ads ใส่ช่องกรอก */
@@ -2970,9 +3301,10 @@ const Measure = {
     const cpaRow = cmp.rows.find(r => r.key === 'cpa');
     const noise = noiseVerdict(this.campaign, cpaRow ? cpaRow.deltaPct : null);
     host.append(el('div', { class: 'verdict-panel' },
-      el('div', { class: 'card-head', style: 'margin-bottom:12px' },
-        el('h3', {}, 'เทียบกับตัวเลขครั้งก่อน'),
-        verdictBadge(cmp.verdict)),
+      el('div', { class: 'step-label', style: 'margin:0 0 10px' },
+        el('span', { class: 'step-no' }, '3'), 'ผลที่ได้'),
+      // ประโยคสรุปมาก่อน ตารางเปอร์เซ็นต์เป็นของแถม ไม่ใช่ของหลัก
+      verdictSummary(cmp, this.baseline.block, cur),
       deltaTiles(cmp),
       confidenceNote(this.baseline.block, cur),
       noise ? el('div', { class: `conf-note ${noise.beyond ? 'conf-high' : 'conf-mid'}` },
@@ -3075,6 +3407,7 @@ function openRecordNumbers(rec) {
       el('div', { class: 'card-head', style: 'margin-bottom:12px' },
         el('h3', {}, 'ผลรวมของรอบนี้'),
         verdictBadge(cmp.verdict)),
+      verdictSummary(cmp, block(rnd.from, 'before'), block(rnd.to, 'before')),
       deltaTiles(cmp),
       confidenceNote(block(rnd.from, 'before'), block(rnd.to, 'before')),
       noise ? el('div', { class: `conf-note ${noise.beyond ? 'conf-high' : 'conf-mid'}` },
@@ -4038,6 +4371,423 @@ function renderWeekdayTable() {
   }
 }
 
+/* ─────────────────────────────────────────────────────────────
+   10a-11. หน้า "ที่มา Lead" — Key events จาก GA4
+
+   ตอบคำถามว่า "ลูกค้าที่ทักมา มาจากทางไหน และทักมาทางไหน"
+     แถว = ที่มาของทราฟฟิก (Organic Search / Paid Search / …)
+     คอลัมน์ = ประเภทที่ติดต่อเข้ามา (Add Line / click_facebook / Call Us)
+
+   ที่ต้องระวังและเขียนกำกับไว้ในหน้า:
+   ตัวเลข GA4 กับ Conversions ของ Google Ads ไม่มีวันตรงกัน เพราะนับคนละแบบ
+   จึงแยกคนละหน้า ไม่เอามาบวกกัน และให้ใช้ GA4 ดู "สัดส่วน" เป็นหลัก
+   ───────────────────────────────────────────────────────────── */
+
+const LEAD_PRESETS = [
+  { key: '7', label: '7 วัน', days: 7 },
+  { key: '14', label: '14 วัน', days: 14 },
+  { key: '30', label: '30 วัน', days: 30 },
+  { key: '90', label: '90 วัน', days: 90 },
+  { key: 'all', label: 'ทั้งหมด', days: 0 }
+];
+
+/** ชื่อช่องทางของ GA4 เป็นภาษาอังกฤษ — แปลเฉพาะตัวที่เจอบ่อย */
+const CHANNEL_TH = {
+  'Organic Search': 'Organic Search (SEO)',
+  'Paid Search': 'Paid Search (SEM)',
+  'Paid Social': 'Paid Social',
+  'Organic Social': 'Organic Social',
+  'Direct': 'Direct (พิมพ์ URL เอง)',
+  'Referral': 'Referral (เว็บอื่นส่งมา)',
+  'Email': 'Email',
+  'Display': 'Display',
+  'Unassigned': 'ระบุที่มาไม่ได้'
+};
+const channelLabel = c => CHANNEL_TH[c] || c || 'ไม่ระบุ';
+
+function hasLeadData() { return FEATURES.ga4 && Array.isArray(Store.leads) && Store.leads.length > 0; }
+
+function leadDataUpTo() {
+  let latest = '';
+  for (const l of Store.leads || []) {
+    const d = String(l.date || '');
+    if (d > latest) latest = d;
+  }
+  return latest;
+}
+
+function leadRows() {
+  const from = $('#lead_from')?.value, to = $('#lead_to')?.value;
+  const ch = $('#leadChannel')?.value || '';
+  return (Store.leads || []).filter(l => {
+    const d = String(l.date || '');
+    if (!d) return false;
+    if (from && d < from) return false;
+    if (to && d > to) return false;
+    if (ch && String(l.channel || '') !== ch) return false;
+    return true;
+  });
+}
+
+const leadCount = l => num(l.key_events) || 0;
+
+/** รายชื่อประเภท event เรียงตามจำนวนมากไปน้อย */
+function leadEventNames(rows) {
+  const tally = new Map();
+  for (const l of rows) {
+    const n = String(l.event_name || '').trim();
+    if (!n) continue;
+    tally.set(n, (tally.get(n) || 0) + leadCount(l));
+  }
+  return [...tally.entries()].sort((a, b) => b[1] - a[1]).map(([n]) => n);
+}
+
+/** ตารางไขว้ ช่องทาง × ประเภท */
+function leadPivot(rows) {
+  const events = leadEventNames(rows);
+  const byChannel = new Map();
+  for (const l of rows) {
+    const c = String(l.channel || '') || 'ไม่ระบุ';
+    if (!byChannel.has(c)) byChannel.set(c, { channel: c, total: 0, cells: {} });
+    const e = byChannel.get(c);
+    const name = String(l.event_name || '').trim();
+    const v = leadCount(l);
+    e.cells[name] = (e.cells[name] || 0) + v;
+    e.total += v;
+  }
+  const list = [...byChannel.values()].sort((a, b) => b.total - a.total);
+  const totals = { total: 0, cells: {} };
+  for (const r of list) {
+    totals.total += r.total;
+    for (const e of events) totals.cells[e] = (totals.cells[e] || 0) + (r.cells[e] || 0);
+  }
+  return { events, rows: list, totals };
+}
+
+function leadByDay(rows) {
+  const byDate = new Map();
+  for (const l of rows) {
+    const d = String(l.date);
+    if (!byDate.has(d)) byDate.set(d, { date: d, total: 0, cells: {} });
+    const e = byDate.get(d);
+    const name = String(l.event_name || '').trim();
+    const v = leadCount(l);
+    e.cells[name] = (e.cells[name] || 0) + v;
+    e.total += v;
+  }
+  return [...byDate.values()].sort((a, b) => b.date.localeCompare(a.date));
+}
+
+/**
+ * ต้นทุนต่อ lead รายแคมเปญ — จับคู่ชื่อแคมเปญของ GA4 กับ Cost จากชีต METRICS
+ * จะมีข้อมูลก็ต่อเมื่อ GA4 ผูกกับ Google Ads และเปิด auto-tagging ไว้
+ */
+function leadByCampaign(rows) {
+  const from = $('#lead_from')?.value, to = $('#lead_to')?.value;
+  const byName = new Map();
+  for (const l of rows) {
+    const n = String(l.campaign || '').trim();
+    if (!n) continue;
+    if (!byName.has(n)) byName.set(n, { campaign: n, leads: 0, byEvent: {} });
+    const e = byName.get(n);
+    const v = leadCount(l);
+    e.leads += v;
+    const name = String(l.event_name || '').trim();
+    e.byEvent[name] = (e.byEvent[name] || 0) + v;
+  }
+
+  const out = [];
+  for (const e of byName.values()) {
+    const spend = sumAdsRange(e.campaign, from, to);
+    const recs = Store.sorted().filter(r => r.campaign === e.campaign);
+    out.push({
+      ...e,
+      product: recs.length ? recProduct(recs[0]) : (Store.campaign(e.campaign)?.product || ''),
+      cost: spend ? spend.cost : null,
+      cpl: spend && e.leads ? round(spend.cost / e.leads, 2) : null,
+      matched: !!spend
+    });
+  }
+  return out.sort((a, b) => b.leads - a.leads);
+}
+
+function setLeadRange(days) {
+  const upTo = leadDataUpTo() || todayISO();
+  $('#lead_to').value = upTo;
+  if (!days) {
+    let first = upTo;
+    for (const l of Store.leads || []) {
+      const d = String(l.date || '');
+      if (d && d < first) first = d;
+    }
+    $('#lead_from').value = first;
+  } else {
+    const d = new Date(upTo);
+    d.setDate(d.getDate() - (days - 1));
+    $('#lead_from').value = d.toLocaleDateString('sv-SE');
+  }
+}
+
+function initLeadPage() {
+  const presets = $('#leadPresets');
+  if (!presets) return;
+  presets.innerHTML = '';
+  for (const p of LEAD_PRESETS) {
+    presets.append(el('button', {
+      type: 'button', class: 'chip', 'data-preset': p.key,
+      'aria-pressed': String(p.key === '30'),
+      onclick: () => {
+        $$('#leadPresets .chip').forEach(c =>
+          c.setAttribute('aria-pressed', String(c.dataset.preset === p.key)));
+        setLeadRange(p.days);
+        renderLeadPage();
+      }
+    }, p.label));
+  }
+  for (const id of ['#lead_from', '#lead_to', '#leadChannel']) {
+    $(id)?.addEventListener('change', () => {
+      if (id !== '#leadChannel') {
+        $$('#leadPresets .chip').forEach(c => c.setAttribute('aria-pressed', 'false'));
+      }
+      renderLeadPage();
+    });
+  }
+  $('#leadCopyPivot')?.addEventListener('click', () => copyLeads('pivot'));
+  $('#leadCopyCamp')?.addEventListener('click', () => copyLeads('campaign'));
+  $('#leadCopyDay')?.addEventListener('click', () => copyLeads('day'));
+  setLeadRange(30);
+}
+
+function renderLeadPage() {
+  const warn = $('#leadWarn');
+  if (!warn) return;
+  warn.innerHTML = '';
+
+  const clear = () => {
+    $('#leadStats').innerHTML = '';
+    for (const id of ['#leadPivotTable', '#leadCampTable', '#leadDayTable']) {
+      const t = $(id);
+      if (!t) continue;
+      t.querySelector('thead tr').innerHTML = '';
+      t.querySelector('tbody').innerHTML = '';
+      if (t.querySelector('tfoot')) t.querySelector('tfoot').innerHTML = '';
+    }
+  };
+
+  if (!hasLeadData()) {
+    warn.append(el('div', { class: 'banner warn' },
+      el('span', { class: 'icon' }, '📊'),
+      el('span', {},
+        el('b', {}, 'ยังไม่มีข้อมูลจาก Google Analytics '),
+        'หน้านี้จะมีข้อมูลเมื่อเพิ่มไฟล์ ', el('code', {}, 'GA4Leads.gs'),
+        ' เข้าไปใน Apps Script แล้วตั้งให้รันวันละครั้ง — ดูขั้นตอนใน README',
+        el('div', { class: 'card-note', style: 'margin-top:6px' },
+          'สรุปสั้น ๆ: เปิด Services → เพิ่ม Google Analytics Data API → ใส่ Property ID → รัน setupLeads แล้ว pullLeads'))));
+    clear();
+    return;
+  }
+
+  // ตัวเลือกช่องทาง
+  const sel = $('#leadChannel');
+  const keep = sel.value;
+  const channels = [...new Set((Store.leads || []).map(l => String(l.channel || '')).filter(Boolean))].sort();
+  sel.innerHTML = '';
+  sel.append(el('option', { value: '' }, 'ทุกช่องทาง'));
+  for (const c of channels) sel.append(el('option', { value: c }, channelLabel(c)));
+  sel.value = channels.includes(keep) ? keep : '';
+
+  const rows = leadRows();
+  const pivot = leadPivot(rows);
+  const upTo = leadDataUpTo();
+
+  warn.append(el('div', { class: 'banner good' },
+    el('span', { class: 'icon' }, '📊'),
+    el('span', {}, 'ข้อมูลจาก Google Analytics · ล่าสุดถึงวันที่ ', el('b', {}, thaiDate(upTo)),
+      ' · นับจาก Key events ที่ตั้งไว้ใน GA4')));
+
+  // ── การ์ดสรุป
+  const days = new Set(rows.map(r => String(r.date))).size;
+  const paid = pivot.rows.find(r => r.channel === 'Paid Search');
+  const organic = pivot.rows.find(r => r.channel === 'Organic Search');
+  const topEvent = pivot.events[0];
+  const stats = $('#leadStats');
+  stats.innerHTML = '';
+  const cards = [
+    { cls: 'c3', icon: 'up', label: 'Lead ทั้งหมด', value: fmt(pivot.totals.total, 0), unit: '',
+      active: true, sub: days ? `${days} วัน · เฉลี่ย ${fmt(pivot.totals.total / days, 1)}/วัน` : '' },
+    { cls: 'c1', icon: 'edit', label: 'จาก Paid Search (SEM)', value: fmt(paid?.total || 0, 0), unit: '',
+      ring: pivot.totals.total ? (paid?.total || 0) / pivot.totals.total * 100 : null,
+      sub: pivot.totals.total ? `${fmt((paid?.total || 0) / pivot.totals.total * 100, 0)}% ของทั้งหมด` : '' },
+    { cls: 'c4', icon: 'up', label: 'จาก Organic Search (SEO)', value: fmt(organic?.total || 0, 0), unit: '',
+      ring: pivot.totals.total ? (organic?.total || 0) / pivot.totals.total * 100 : null,
+      sub: pivot.totals.total ? `${fmt((organic?.total || 0) / pivot.totals.total * 100, 0)}% ของทั้งหมด` : '' },
+    { cls: 'c1', icon: 'clock', label: 'ประเภทที่มามากสุด', value: topEvent || '—', unit: '',
+      sub: topEvent ? `${fmt(pivot.totals.cells[topEvent] || 0, 0)} ครั้ง` : '' }
+  ];
+  for (const c of cards) {
+    stats.append(el('div', { class: `stat-card ${c.cls}${c.active ? ' is-active' : ''}` },
+      el('div', { class: 'sc-body' },
+        el('div', { class: 'sc-label' }, c.label),
+        statValue(c.value, c.unit),
+        el('div', { class: 'sc-sub' }, c.sub)),
+      (c.ring !== undefined && c.ring !== null) ? statRing(c.ring) : svgIcon(c.icon)));
+  }
+
+  renderLeadPivot(pivot);
+  renderLeadCampaigns(rows);
+  renderLeadDays(rows, pivot.events);
+}
+
+function renderLeadPivot(pivot) {
+  const tbl = $('#leadPivotTable');
+  const head = tbl.querySelector('thead tr');
+  const tb = tbl.querySelector('tbody');
+  const tf = tbl.querySelector('tfoot');
+  head.innerHTML = ''; tb.innerHTML = ''; tf.innerHTML = '';
+
+  head.append(el('th', {}, 'ช่องทาง'));
+  for (const e of pivot.events) head.append(el('th', { class: 'num as-is' }, e));
+  head.append(el('th', { class: 'num' }, 'รวม'));
+  head.append(el('th', { class: 'num' }, '% ของทั้งหมด'));
+
+  if (!pivot.rows.length) {
+    tb.append(el('tr', {}, el('td', { colspan: String(pivot.events.length + 3) },
+      el('div', { class: 'empty' }, el('strong', {}, 'ไม่มีข้อมูลในช่วงนี้'),
+        'ลองขยายช่วงเวลา หรือเอาตัวกรองช่องทางออก'))));
+    return;
+  }
+
+  for (const r of pivot.rows) {
+    const pct = pivot.totals.total ? r.total / pivot.totals.total * 100 : 0;
+    tb.append(el('tr', {},
+      el('td', {}, el('b', {}, channelLabel(r.channel))),
+      ...pivot.events.map(e => el('td', { class: 'num' + ((r.cells[e] || 0) ? '' : ' val-none') },
+        (r.cells[e] || 0) ? fmt(r.cells[e], 0) : '—')),
+      el('td', { class: 'num val-strong' }, fmt(r.total, 0)),
+      el('td', { class: 'num cell-sub' }, fmt(pct, 1) + '%')));
+  }
+
+  tf.append(el('tr', { class: 'row-total' },
+    el('td', {}, 'รวมทุกช่องทาง'),
+    ...pivot.events.map(e => el('td', { class: 'num' }, fmt(pivot.totals.cells[e] || 0, 0))),
+    el('td', { class: 'num val-strong' }, fmt(pivot.totals.total, 0)),
+    el('td', { class: 'num' }, '100%')));
+}
+
+function renderLeadCampaigns(rows) {
+  const tbl = $('#leadCampTable');
+  const tb = tbl.querySelector('tbody');
+  const tf = tbl.querySelector('tfoot');
+  tb.innerHTML = ''; tf.innerHTML = '';
+
+  const list = leadByCampaign(rows);
+  const note = $('#leadCostNote');
+
+  if (!list.length) {
+    note.textContent = 'GA4 ยังไม่ได้ส่งชื่อแคมเปญมา';
+    tb.append(el('tr', {}, el('td', { colspan: '6' },
+      el('div', { class: 'empty' },
+        el('strong', {}, 'ยังแยกรายแคมเปญไม่ได้'),
+        'GA4 จะส่งชื่อแคมเปญมาก็ต่อเมื่อลิงก์บัญชี Google Ads เข้ากับ GA4 และเปิด auto-tagging ไว้ ' +
+        '(GA4 → Admin → Product links → Google Ads links) · ' +
+        'ถ้าลิงก์แล้วแต่ยังไม่ขึ้น ให้รอ 24–48 ชม. แล้วรัน pullLeads อีกครั้ง'))));
+    return;
+  }
+
+  const unmatched = list.filter(r => !r.matched).length;
+  note.textContent = unmatched
+    ? `จับคู่ Cost ได้ ${list.length - unmatched} จาก ${list.length} แคมเปญ — ที่เหลือชื่อไม่ตรงกับในชีต METRICS`
+    : 'จับคู่ชื่อแคมเปญของ GA4 กับ Cost จาก Google Ads ครบทุกตัว';
+
+  let sumCost = 0, sumLeads = 0;
+  for (const r of list) {
+    if (r.cost !== null) sumCost += r.cost;
+    sumLeads += r.leads;
+    const top = Object.entries(r.byEvent).sort((a, b) => b[1] - a[1]).slice(0, 3);
+    tb.append(el('tr', {},
+      el('td', {}, el('b', {}, r.campaign)),
+      el('td', {}, r.product || '—'),
+      r.cost === null
+        ? el('td', { class: 'num val-none', title: 'ไม่มีแคมเปญชื่อนี้ในชีต METRICS' }, '—')
+        : el('td', { class: 'num' }, fmt(r.cost, 0)),
+      el('td', { class: 'num val-strong' }, fmt(r.leads, 0)),
+      r.cpl === null
+        ? el('td', { class: 'num val-none' }, '—')
+        : el('td', { class: 'num val-strong' }, fmt(r.cpl, 2) + ' ฿'),
+      el('td', { class: 'cell-sub' },
+        top.map(([n, v]) => `${n} ${fmt(v, 0)}`).join(' · ') || '—')));
+  }
+
+  tf.append(el('tr', { class: 'row-total' },
+    el('td', {}, 'รวม'),
+    el('td', {}, ''),
+    el('td', { class: 'num' }, fmt(sumCost, 0)),
+    el('td', { class: 'num val-strong' }, fmt(sumLeads, 0)),
+    // ค่าเฉลี่ยคิดจากยอดรวม ไม่ใช่เฉลี่ยของ CPL รายแคมเปญ
+    el('td', { class: 'num val-strong' }, sumLeads ? fmt(sumCost / sumLeads, 2) + ' ฿' : '—'),
+    el('td', {}, '')));
+}
+
+function renderLeadDays(rows, events) {
+  const tbl = $('#leadDayTable');
+  const head = tbl.querySelector('thead tr');
+  const tb = tbl.querySelector('tbody');
+  const tf = tbl.querySelector('tfoot');
+  head.innerHTML = ''; tb.innerHTML = ''; tf.innerHTML = '';
+
+  head.append(el('th', { class: 'table-left' }, 'วันที่'));
+  for (const e of events) head.append(el('th', { class: 'num as-is' }, e));
+  head.append(el('th', { class: 'num' }, 'รวม'));
+
+  const days = leadByDay(rows);
+  $('#leadDayNote').textContent = days.length ? `${days.length} วัน · ใหม่อยู่บน` : '';
+
+  for (const d of days) {
+    tb.append(el('tr', {},
+      el('td', { class: 'table-left' }, thaiDate(d.date),
+        el('span', { class: 'cell-sub' }, ' ' + relativeDay(d.date))),
+      ...events.map(e => el('td', { class: 'num' + ((d.cells[e] || 0) ? '' : ' val-none') },
+        (d.cells[e] || 0) ? fmt(d.cells[e], 0) : '—')),
+      el('td', { class: 'num val-strong' }, fmt(d.total, 0))));
+  }
+
+  const tot = { total: 0, cells: {} };
+  for (const d of days) {
+    tot.total += d.total;
+    for (const e of events) tot.cells[e] = (tot.cells[e] || 0) + (d.cells[e] || 0);
+  }
+  tf.append(el('tr', { class: 'row-total' },
+    el('td', { class: 'table-left' }, `รวม ${days.length} วัน`),
+    ...events.map(e => el('td', { class: 'num' }, fmt(tot.cells[e] || 0, 0))),
+    el('td', { class: 'num val-strong' }, fmt(tot.total, 0))));
+}
+
+function copyLeads(kind) {
+  const rows = leadRows();
+  const pivot = leadPivot(rows);
+  let text = '';
+
+  if (kind === 'pivot') {
+    text = ['ช่องทาง', ...pivot.events, 'รวม'].join('\t') + '\n' +
+      pivot.rows.map(r => [channelLabel(r.channel),
+        ...pivot.events.map(e => r.cells[e] || 0), r.total].join('\t')).join('\n') +
+      '\n' + ['รวมทุกช่องทาง', ...pivot.events.map(e => pivot.totals.cells[e] || 0),
+        pivot.totals.total].join('\t');
+  } else if (kind === 'campaign') {
+    const list = leadByCampaign(rows);
+    text = ['แคมเปญ', 'สินค้า', 'Cost', 'Lead', 'Cost/Lead'].join('\t') + '\n' +
+      list.map(r => [r.campaign, r.product, r.cost ?? '', r.leads, r.cpl ?? ''].join('\t')).join('\n');
+  } else {
+    const days = leadByDay(rows);
+    text = ['วันที่', ...pivot.events, 'รวม'].join('\t') + '\n' +
+      days.map(d => [d.date, ...pivot.events.map(e => d.cells[e] || 0), d.total].join('\t')).join('\n');
+  }
+
+  navigator.clipboard.writeText(text)
+    .then(() => toast('คัดลอกแล้ว — วางในชีตได้เลย'))
+    .catch(() => toast('คัดลอกไม่สำเร็จ'));
+}
+
 function copySpend(kind) {
   const rows = spendRows();
   const total = spendTotals(rows);
@@ -4344,7 +5094,7 @@ function budgetPacing(campaign, days = 14) {
   };
 }
 
-function hasAdsData() { return Array.isArray(Store.metrics) && Store.metrics.length > 0; }
+function hasAdsData() { return FEATURES.ads && Array.isArray(Store.metrics) && Store.metrics.length > 0; }
 
 /** วันล่าสุดที่มีข้อมูล — ใช้บอกความสดของข้อมูล */
 function adsDataUpTo() {
@@ -4418,8 +5168,8 @@ function sumAdsRange(campaign, from, to) {
  * ตอนเวอร์ชันก่อน (ตอนนั้นค่าถูกเก็บติดไปกับบันทึกรายวัน)
  */
 function latestSetting(campaign, key) {
-  // งบมาจาก Google Ads ตรง ๆ ถือว่าแม่นกว่าที่กรอกมือเสมอ
-  const ads = latestAdsRow(campaign);
+  // งบมาจาก Google Ads ตรง ๆ ถือว่าแม่นกว่าที่กรอกมือเสมอ — ถ้าเปิดระบบไว้
+  const ads = FEATURES.ads ? latestAdsRow(campaign) : null;
   if (ads) {
     // max_cpc เชื่อได้เฉพาะแคมเปญที่ bid เอง — สคริปต์รุ่นเก่าเคยส่งค่า default
     // ของ Google (0.01 / 0.10) ติดมาด้วย จึงต้องกรองซ้ำอีกชั้นตรงนี้
@@ -4582,10 +5332,14 @@ function renderBudgetPage() {
       (c.ring !== undefined && c.ring !== null) ? statRing(c.ring) : svgIcon(c.icon)));
   }
 
+  const showAds = FEATURES.ads;
+  // ซ่อนหัวคอลัมน์ที่ใช้ได้เฉพาะตอนเปิดระบบ Ads
+  $$('#budgetTable thead [data-feat="ads"]').forEach(th => { th.hidden = !showAds; });
+
   const tbody = $('#budgetTable').querySelector('tbody');
   tbody.innerHTML = '';
   if (!rows.length) {
-    tbody.append(el('tr', {}, el('td', { colspan: '9' },
+    tbody.append(el('tr', {}, el('td', { colspan: String(showAds ? 9 : 7) },
       el('div', { class: 'empty' },
         el('strong', {}, 'ยังไม่มีข้อมูลงบและ bid'),
         'กรอกช่อง "งบต่อวัน" และ "Max CPC bid" ในหน้าบันทึกใหม่ตอนที่เปลี่ยนค่า แล้วหน้านี้จะดึงค่าล่าสุดมาแสดงให้เอง'))));
@@ -4625,15 +5379,17 @@ function renderBudgetPage() {
       r.budget
         ? el('td', { class: 'num val-strong' }, fmt(r.budget.value, 0) + ' ฿')
         : el('td', { class: 'num val-none' }, '—'),
-      pace
-        ? el('td', {}, el('span', { class: `pace pace-${pace.level}`, title: pace.text },
-            `${fmt(pace.pct, 0)}%`,
-            el('span', { class: 'pace-tag' },
-              pace.level === 'capped' ? ' ตัน' : pace.level === 'idle' ? ' เหลือ' : ' พอดี')))
-        : el('td', { class: 'val-none' }, '—'),
-      el('td', {}, r.strategy
-        ? el('span', { class: 'src-ads' }, strategyLabel(r.ads))
-        : el('span', { class: 'val-none' }, '—')),
+      !showAds ? null
+        : pace
+          ? el('td', {}, el('span', { class: `pace pace-${pace.level}`, title: pace.text },
+              `${fmt(pace.pct, 0)}%`,
+              el('span', { class: 'pace-tag' },
+                pace.level === 'capped' ? ' ตัน' : pace.level === 'idle' ? ' เหลือ' : ' พอดี')))
+          : el('td', { class: 'val-none' }, '—'),
+      !showAds ? null
+        : el('td', {}, r.strategy
+            ? el('span', { class: 'src-ads' }, strategyLabel(r.ads))
+            : el('span', { class: 'val-none' }, '—')),
       el('td', {
         class: 'num' + (set.kind === 'none' || set.kind === 'auto' || set.kind === 'uncapped'
           ? ' val-none' : ' val-strong'),
@@ -5733,6 +6489,166 @@ function renderConnStatusBox() {
   }
 }
 
+/* ─────────────────────────────────────────────────────────────
+   ตรวจว่าการเชื่อมต่อติดตรงไหน
+
+   ปัญหาเดิม: พอต่อไม่ได้ ได้ข้อความเดียวว่า "token ไม่ถูกต้อง" ซึ่งไม่บอกว่า
+   ต้องไปแก้ที่ Apps Script, ที่ Cloudflare หรือที่เบราว์เซอร์ — ต้องเดาเอาเอง
+   ตัวนี้ไล่เช็กทีละชั้นแล้วบอกว่าชั้นไหนพัง พร้อมวิธีแก้ของชั้นนั้น
+   ───────────────────────────────────────────────────────────── */
+
+async function runConnectionDiagnostic() {
+  const host = $('#cfgDiagResult');
+  if (!host) return;
+  host.innerHTML = '';
+  host.append(el('div', { class: 'banner' },
+    el('span', { class: 'icon' }, '⏳'), el('span', {}, 'กำลังตรวจ…')));
+
+  const steps = [];
+  const add = (name, state, detail, fix) => steps.push({ name, state, detail, fix });
+
+  // ชั้นที่ 1 — มีตัวกลางไหม
+  let proxyOk = false, proxyConfigured = false;
+  try {
+    const res = await fetch(PROXY_PATH, { method: 'GET', cache: 'no-store' });
+    if (res.ok) {
+      const info = await res.json().catch(() => null);
+      proxyOk = !!(info && info.proxy === 'ads-adjust-record');
+      proxyConfigured = !!(info && info.configured);
+    }
+  } catch { /* ไม่มีก็ไม่มี */ }
+
+  if (!proxyOk) {
+    add('ตัวกลาง /api/sheet', 'bad', 'ยิงไปแล้วไม่เจอ',
+      'เว็บนี้ยังไม่ได้อยู่บน Cloudflare Pages หรือโฟลเดอร์ functions/ ไม่ได้อยู่ที่รากของ repo · ' +
+      'ถ้าเปิดจากไฟล์ในเครื่องก็จะเป็นแบบนี้ปกติ ให้กรอก URL + token เองด้านบนแทน');
+  } else if (!proxyConfigured) {
+    add('ตัวกลาง /api/sheet', 'warn', 'เจอแล้ว แต่ยังไม่ได้ตั้งค่า',
+      'ไปที่ Cloudflare → Settings → Environment variables ใส่ SHEET_URL กับ API_TOKEN ' +
+      'แล้ว **ต้องกด Deployments → ⋯ → Retry deployment** ด้วย (ตัวแปรมีผลกับ deployment ถัดไปเท่านั้น)');
+  } else {
+    add('ตัวกลาง /api/sheet', 'ok', 'ใช้ได้ ตั้งค่าครบ', '');
+  }
+
+  // ชั้นที่ 2 — ชีตตอบไหม และรหัสตรงไหม
+  let ping = null;
+  try {
+    ping = await Store.call('ping', {});
+  } catch (err) {
+    ping = { ok: false, error: err.message || String(err) };
+  }
+
+  if (!ping || ping.ok === false) {
+    const msg = String(ping?.error || 'ไม่ทราบสาเหตุ');
+    if (/token/i.test(msg)) {
+      add('รหัส API_TOKEN', 'bad', msg,
+        'รหัสต้องตรงกัน 3 ที่ — Apps Script (Project Settings → Script properties → API_TOKEN) · ' +
+        'Cloudflare (Environment variables) · Google Ads (ในไฟล์ DailyMetrics.js) · ' +
+        'เจอบ่อยที่สุดคือวางโค้ดใหม่ทับ Code.gs แล้วรหัสในโค้ดหาย → ย้ายไปเก็บที่ Script properties แล้วจะไม่เกิดอีก');
+    } else if (/JSON/i.test(msg)) {
+      add('การ Deploy ของ Apps Script', 'bad', msg,
+        'Deploy → Manage deployments → ✏️ → Execute as: Me · Who has access: Anyone → Deploy');
+    } else {
+      add('ต่อไปที่ชีต', 'bad', msg, 'อ่านข้อความข้างบนแล้วไล่แก้ตามนั้น');
+    }
+  } else {
+    add('ต่อไปที่ชีต', 'ok',
+      `ตอบกลับปกติ · Code.gs เวอร์ชัน ${ping.version || '?'}` +
+      (ping.tokenSource ? ` · รหัสอ่านจาก ${ping.tokenSource}` : ''), '');
+
+    if (ping.version && !versionAtLeast(ping.version, SHEET_MIN_VERSION)) {
+      add('เวอร์ชันของ Code.gs', 'warn',
+        `ชีตเป็น ${ping.version} แต่ระบบที่เปิดอยู่ต้องการ ${SHEET_MIN_VERSION} ขึ้นไป`,
+        'วาง Code.gs ตัวใหม่ → Run setup → Deploy → Manage deployments → New version');
+    } else if (ping.version) {
+      add('เวอร์ชันของ Code.gs', 'ok', `${ping.version} — ใหม่พอสำหรับระบบที่เปิดอยู่`, '');
+    }
+
+    if (ping.tokenSource === 'ในโค้ด') {
+      add('ที่เก็บรหัส', 'warn', 'รหัสยังอยู่ในโค้ด Code.gs',
+        'ย้ายไปที่ Project Settings → Script properties (ชื่อ API_TOKEN) ' +
+        'ไม่งั้นครั้งหน้าที่วางโค้ดใหม่ทับ รหัสจะหายแล้วพังทั้งเว็บและสคริปต์ Ads พร้อมกัน');
+    }
+  }
+
+  // ชั้นที่ 3 — เบราว์เซอร์นี้ใช้ค่าอะไรอยู่
+  const manual = !Store.usingDefault && !isProxyUrl(Store.config.url);
+  add('เบราว์เซอร์เครื่องนี้', manual ? 'warn' : 'ok',
+    manual ? `ใช้ URL ที่กรอกไว้เอง (${String(Store.config.url).slice(0, 42)}…)`
+           : `ใช้ตัวกลางอัตโนมัติ (${Store.config.url || 'ออฟไลน์'})`,
+    manual && proxyOk && proxyConfigured
+      ? 'ตัวกลางใช้ได้แล้ว — กด "ใช้ชีตเริ่มต้น" เพื่อเลิกใช้ค่าที่กรอกเอง จะได้ไม่ต้องกรอกทุกเครื่องอีก'
+      : '');
+
+  // ── แสดงผล
+  host.innerHTML = '';
+  const ICON = { ok: '✓', warn: '!', bad: '✕' };
+  const list = el('div', { class: 'diag-list' });
+  for (const s of steps) {
+    list.append(el('div', { class: `diag-item diag-${s.state}` },
+      el('span', { class: 'dg-icon' }, ICON[s.state]),
+      el('div', {},
+        el('div', { class: 'dg-head' }, s.name, el('span', { class: 'dg-detail' }, ' — ' + s.detail)),
+        s.fix ? el('div', { class: 'dg-fix' }, s.fix) : null)));
+  }
+
+  const bad = steps.filter(s => s.state === 'bad').length;
+  host.append(el('div', { class: `banner ${bad ? 'bad' : 'good'}`, style: 'margin-bottom:10px' },
+    el('span', { class: 'icon' }, bad ? '🔧' : '✅'),
+    el('span', {}, bad
+      ? `เจอปัญหา ${bad} จุด — ไล่แก้ตามด้านล่างจากบนลงล่าง`
+      : 'ทุกชั้นผ่าน — ถ้ายังใช้ไม่ได้ ลองกดปุ่มโหลดข้อมูลใหม่ที่มุมซ้ายล่าง')));
+  host.append(list);
+}
+
+/* ─────────────────────────────────────────────────────────────
+   กล่อง "ระบบเสริม" ในหน้าตั้งค่า
+   ───────────────────────────────────────────────────────────── */
+
+const FEATURE_INFO = [
+  {
+    key: 'ads',
+    title: 'ดึงตัวเลขรายวันจาก Google Ads',
+    what: 'เปิดแล้วได้: หน้า "ตัวเลขรายวัน" · กล่อง "งานที่รอ" ที่จับการปรับให้เอง · ' +
+          'ปุ่มเติมตัวเลขวัดผลอัตโนมัติ · งบและค่า bid ที่ดึงมาเอง · สถานะงบตัน/งบเหลือ',
+    need: 'ต้องวางไฟล์ DailyMetrics.js ใน Google Ads (Tools → Bulk actions → Scripts) ' +
+          'และตั้งให้รันวันละครั้ง · ชีตต้องเป็น Code.gs เวอร์ชัน 1.6.0 ขึ้นไป'
+  },
+  {
+    key: 'ga4',
+    title: 'ดึง Lead จาก Google Analytics',
+    what: 'เปิดแล้วได้: หน้า "ที่มา Lead" — แยกว่า lead มาจาก SEO หรือ SEM ' +
+          'และติดต่อเข้ามาทางไหน (LINE / Facebook / โทร) พร้อมต้นทุนต่อ lead รายแคมเปญ',
+    need: 'ต้องเพิ่มไฟล์ GA4Leads.gs ใน Apps Script · เปิด Google Analytics Data API ' +
+          '· บัญชีที่รันสคริปต์ต้องมีสิทธิ์อ่าน GA4 property นั้น · ชีตต้องเป็นเวอร์ชัน 1.7.0 ขึ้นไป'
+  }
+];
+
+function renderFeatureToggles() {
+  const host = $('#featureList');
+  if (!host) return;
+  host.innerHTML = '';
+
+  for (const f of FEATURE_INFO) {
+    const on = !!FEATURES[f.key];
+    host.append(el('div', { class: `feature-row${on ? ' is-on' : ''}` },
+      el('div', { class: 'ft-main' },
+        el('div', { class: 'ft-title' },
+          el('b', {}, f.title),
+          el('span', { class: `ft-state ${on ? 'on' : 'off'}` }, on ? 'เปิดอยู่' : 'ปิดอยู่')),
+        el('div', { class: 'ft-what' }, f.what),
+        el('div', { class: 'ft-need' }, 'ต้องมีก่อน: ' + f.need)),
+      el('button', {
+        class: 'btn btn-sm' + (on ? '' : ' btn-primary'),
+        onclick: () => setFeature(f.key, !on)
+      }, on ? 'ปิด' : 'เปิดใช้')));
+  }
+
+  host.append(el('p', { class: 'card-note', style: 'margin-top:12px' },
+    'สวิตช์นี้จำไว้ในเบราว์เซอร์เครื่องนี้เท่านั้น — เปิดจากอีกเครื่องต้องกดเปิดใหม่ · ' +
+    'กดแล้วหน้าเว็บจะโหลดใหม่หนึ่งครั้ง'));
+}
+
 function renderTaxonomyEditor() {
   $('#taxonomyText').value = Taxonomy.toText();
   renderCampaignAdder();
@@ -5818,6 +6734,13 @@ function initSettings() {
     }
     refreshAll();
     renderConnStatusBox();
+  });
+
+  $('#cfgDiag')?.addEventListener('click', async e => {
+    e.preventDefault();
+    const btn = $('#cfgDiag');
+    btn.disabled = true;
+    try { await runConnectionDiagnostic(); } finally { btn.disabled = false; }
   });
 
   $('#cfgDefault').addEventListener('click', async () => {
@@ -5994,12 +6917,13 @@ function refreshAll() {
   Form.buildTaxonomySelects();
   Form.refreshCampaignList();
   syncCampaignSelects();
-  if (!$('#panel-data').hidden) { renderTaxonomyEditor(); renderConnStatusBox(); }
+  if (!$('#panel-data').hidden) { renderFeatureToggles(); renderTaxonomyEditor(); renderConnStatusBox(); }
   if (!$('#panel-timeline').hidden) { renderInbox(); renderTimeline(); }
   if (!$('#panel-dashboard').hidden) renderDashboard();
   if (!$('#panel-trend').hidden) renderTrend();
   if (!$('#panel-spend').hidden) renderSpendPage();
   if (!$('#panel-budget').hidden) renderBudgetPage();
+  if (!$('#panel-leads').hidden) renderLeadPage();
 }
 
 /** ลูกศรขึ้น/ลงเลื่อนเมนูซ้าย — พฤติกรรมมาตรฐานของ role="tablist" */
@@ -6059,8 +6983,8 @@ function initShortcuts(help) {
     if (e.key === 't' || e.key === 'T') {
       e.preventDefault(); $('#dailyDate').value = todayISO(); showTab('dashboard'); return;
     }
-    // 1-7 = สลับแท็บ
-    const idx = ['1', '2', '3', '4', '5', '6', '7'].indexOf(e.key);
+    // ตัวเลข = สลับแท็บ ตามลำดับใน PANELS
+    const idx = PANELS.map((_, i) => String(i + 1)).indexOf(e.key);
     if (idx >= 0) { e.preventDefault(); showTab(PANELS[idx]); }
   });
 }
@@ -6084,6 +7008,7 @@ async function boot() {
   Store.loadConfig();
   Store.loadCache();
 
+  applyFeatureVisibility();
   for (const p of PANELS) $(`#tab-${p}`).addEventListener('click', () => showTab(p));
 
   Form.init();
@@ -6092,7 +7017,8 @@ async function boot() {
   initImport();
   initSettings();
   initDailyCard();
-  initSpendPage();
+  if (FEATURES.ads) initSpendPage();
+  if (FEATURES.ga4) initLeadPage();
   initBudgetPage();
   initSidebar();
   initTablistKeys();
@@ -6135,6 +7061,11 @@ async function boot() {
 
   const hash = location.hash.replace('#', '');
   showTab(PANELS.includes(hash) ? hash : 'new');
+
+  // ตัวกลางกลับมาใช้ได้แล้วหรือยัง — ถ้าใช่ เลิกใช้ค่าที่เคยกรอกเองไปเลย
+  if (await Store.autoUseProxy()) {
+    toast('ตัวกลาง /api/sheet ใช้ได้แล้ว — เลิกใช้ URL ที่กรอกไว้เอง เชื่อมให้อัตโนมัติแทน', 5200);
+  }
 
   // ดึงข้อมูลจริงตามมาทีหลัง — อัปเดตรายการโดยไม่ล้างสิ่งที่ผู้ใช้กำลังพิมพ์อยู่
   await Store.sync();

@@ -1388,3 +1388,170 @@ input.from-ads { border-color: color-mix(in srgb, var(--accent-solid) 40%, var(-
 
 /* ป้ายกำกับใต้ตัวเลขในช่อง "ค่าที่ตั้งไว้" — ต้องอยู่คนละบรรทัด ไม่งั้นเบียดกับตัวเลข */
 td.num .cell-sub { display: block; margin-top: 2px; line-height: 1.4; }
+
+/* ชื่อ event ของ GA4 เป็นชื่อเฉพาะ (Add Line / click_facebook) ห้ามบังคับเป็นตัวพิมพ์ใหญ่ */
+.data th.as-is { text-transform: none; letter-spacing: 0; }
+
+/* ── กล่อง "ระบบเสริม" ในหน้าตั้งค่า */
+.feature-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface-2);
+}
+.feature-row + .feature-row { margin-top: 10px; }
+.feature-row.is-on { border-color: color-mix(in srgb, var(--good) 42%, var(--border)); background: var(--good-wash); }
+.ft-main { flex: 1 1 320px; min-width: 0; }
+.ft-title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ft-title b { font-weight: 500; }
+.ft-state {
+  padding: 1px 9px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 500;
+  border: 1px solid var(--border);
+}
+.ft-state.on  { color: var(--good-text); border-color: color-mix(in srgb, var(--good) 40%, var(--border)); }
+.ft-state.off { color: var(--text-secondary); }
+.ft-what { margin-top: 6px; font-size: 0.85rem; line-height: 1.7; color: var(--text-secondary); }
+.ft-need { margin-top: 6px; font-size: 0.78rem; line-height: 1.65; color: var(--text-secondary); }
+.feature-row > .btn { flex: none; align-self: center; }
+
+/* ═══════════════════════════════════════════════════════════════
+   v1.19 — สรุปผลเป็นภาษาคน · ขั้นตอนในป๊อปอัพวัดผล · ตัวตรวจการเชื่อมต่อ
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── ประโยคสรุปผล ใช้ทุกที่ที่มีการเทียบก่อน/หลัง */
+.plain-verdict {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 13px 15px;
+  margin-bottom: 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface-2);
+}
+.pv-icon {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: #fff;
+  background: var(--text-muted);
+}
+.pv-head { font-size: 1rem; font-weight: 500; line-height: 1.5; }
+.pv-detail { margin-top: 3px; font-size: 0.85rem; line-height: 1.7; color: var(--text-secondary); }
+
+.pv-good { border-color: color-mix(in srgb, var(--good) 45%, var(--border)); background: var(--good-wash); }
+.pv-good .pv-icon { background: var(--good); }
+.pv-bad  { border-color: color-mix(in srgb, var(--critical) 45%, var(--border)); background: var(--critical-wash); }
+.pv-bad  .pv-icon { background: var(--critical); }
+.pv-flat .pv-icon { background: var(--text-muted); }
+.pv-unsure { border-color: color-mix(in srgb, var(--warning) 45%, var(--border)); background: var(--warning-wash); }
+.pv-unsure .pv-icon { background: var(--warning); color: #3a2a00; }
+
+/* แบบบางสำหรับใบบันทึกในไทม์ไลน์ */
+.pv-slim { padding: 9px 12px; margin: 10px 0 6px; border-radius: 12px; }
+.pv-slim .pv-icon { width: 20px; height: 20px; font-size: 0.74rem; }
+.pv-slim .pv-head { font-size: 0.9rem; }
+.pv-slim .pv-detail { font-size: 0.8rem; }
+
+/* ── ป้ายลำดับขั้นในป๊อปอัพวัดผล */
+.step-label {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 20px 0 8px;
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+.step-no {
+  width: 21px; height: 21px;
+  border-radius: 999px;
+  display: grid; place-items: center;
+  background: var(--accent-solid);
+  color: #fff;
+  font-size: 0.74rem;
+  font-weight: 600;
+}
+
+/* ── กล่องอธิบายว่ากำลังเทียบอะไร */
+.meas-explain {
+  margin-top: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface-2);
+}
+.mx-line {
+  display: flex;
+  gap: 10px;
+  font-size: 0.87rem;
+  line-height: 1.75;
+  color: var(--text-secondary);
+}
+.mx-line + .mx-line { margin-top: 8px; }
+.mx-line b { font-weight: 500; color: var(--text); }
+.mx-num {
+  flex: none;
+  width: 19px; height: 19px;
+  margin-top: 4px;
+  border-radius: 999px;
+  display: grid; place-items: center;
+  background: var(--accent-soft);
+  color: var(--accent-solid);
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+.mx-dim { color: var(--text-muted); }
+.mx-adjs { margin-top: 10px; font-size: 0.85rem; }
+.mx-adjs > summary { cursor: pointer; color: var(--accent-solid); }
+
+/* ── คู่มือระบบวัดผล */
+.guide-list { display: flex; flex-direction: column; gap: 10px; }
+.guide-item {
+  padding: 12px 15px;
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  background: var(--surface-2);
+}
+.gi-head { font-weight: 500; margin-bottom: 4px; }
+.gi-body { font-size: 0.87rem; line-height: 1.75; color: var(--text-secondary); }
+
+/* ── ผลตรวจการเชื่อมต่อ */
+.diag-list { display: flex; flex-direction: column; gap: 8px; }
+.diag-item {
+  display: flex;
+  gap: 11px;
+  padding: 11px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+.dg-icon {
+  flex: none;
+  width: 21px; height: 21px;
+  border-radius: 999px;
+  display: grid; place-items: center;
+  font-size: 0.74rem; font-weight: 600;
+  color: #fff;
+}
+.diag-ok   { border-color: color-mix(in srgb, var(--good) 40%, var(--border)); background: var(--good-wash); }
+.diag-ok   .dg-icon { background: var(--good); }
+.diag-warn { border-color: color-mix(in srgb, var(--warning) 40%, var(--border)); background: var(--warning-wash); }
+.diag-warn .dg-icon { background: var(--warning); color: #3a2a00; }
+.diag-bad  { border-color: color-mix(in srgb, var(--critical) 40%, var(--border)); background: var(--critical-wash); }
+.diag-bad  .dg-icon { background: var(--critical); }
+.dg-head { font-size: 0.9rem; font-weight: 500; line-height: 1.6; }
+.dg-detail { font-weight: 300; color: var(--text-secondary); }
+.dg-fix { margin-top: 5px; font-size: 0.82rem; line-height: 1.7; color: var(--text-secondary); }
