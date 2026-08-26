@@ -23,9 +23,9 @@
  */
 
 const ALLOWED_ACTIONS = new Set([
-  'list', 'metrics', 'ping',
+  'list', 'metrics', 'leads', 'ping',
   'create', 'update', 'delete', 'bulkCreate',
-  'saveProducts', 'saveCampaign', 'upsertMetrics'
+  'saveProducts', 'saveCampaign', 'upsertMetrics', 'upsertLeads'
 ]);
 
 /** ตอบกลับเป็น JSON พร้อมกันไม่ให้ CDN เก็บแคชข้อมูลของบัญชีไว้ */
