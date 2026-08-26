@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="assets/styles.css?v=1.20.0">
+<link rel="stylesheet" href="assets/styles.css?v=1.22.0">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%232a78d6'/><path d='M8 22 L13 14 L18 18 L24 9' stroke='white' stroke-width='2.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
 </head>
 <body>
@@ -562,10 +562,12 @@
     <label class="field w-sm">
       <span class="field-label">ย้อนหลัง</span>
       <select id="changeDays">
-        <option value="7">7 วัน</option>
-        <option value="14" selected>14 วัน</option>
+        <option value="today">วันนี้</option>
+        <option value="2">วันนี้ + เมื่อวาน</option>
+        <option value="7" selected>7 วัน</option>
+        <option value="14">14 วัน</option>
         <option value="30">30 วัน</option>
-        <option value="0">ทั้งหมดที่มี</option>
+        <option value="all">ทั้งหมดที่มี</option>
       </select>
     </label>
     <label class="field w-md">
@@ -956,6 +958,6 @@
   </div>
 </dialog>
 
-<script src="assets/app.js?v=1.20.0"></script>
+<script src="assets/app.js?v=1.22.0"></script>
 </body>
 </html>
