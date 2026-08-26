@@ -8,7 +8,7 @@
    1. ค่าคงที่
    ───────────────────────────────────────────────────────────── */
 
-const APP_VERSION = '1.19.0';
+const APP_VERSION = '1.20.0';
 const LS_CONFIG = 'aar.config.v1';
 
 /* ═══════════════════════════════════════════════════════════════
@@ -64,6 +64,7 @@ function setFeature(key, on) {
    ค่าที่กรอกจะเก็บอยู่ในเบราว์เซอร์เครื่องนี้เท่านั้น ไม่ขึ้น repo
    ═══════════════════════════════════════════════════════════════ */
 const PROXY_PATH = '/api/sheet';
+const LOGIN_PATH = '/api/login';
 const DEFAULT_CONFIG = {
   url: PROXY_PATH,
   token: ''          // ตัวกลางเติมให้ฝั่งเซิร์ฟเวอร์ ไม่ต้องมีตรงนี้
@@ -660,12 +661,82 @@ function verdictSummary(cmp, beforeRaw, afterRaw) {
    4. ชั้นเก็บข้อมูล (Google Sheet + สำรองในเครื่อง)
    ───────────────────────────────────────────────────────────── */
 
+/* ─────────────────────────────────────────────────────────────
+   ด่านรหัสผ่าน
+   ─────────────────────────────────────────────────────────────
+
+   ตัวที่กันจริงอยู่ฝั่งเซิร์ฟเวอร์ — /api/sheet ตอบ 401 ถ้ายังไม่ได้เข้าระบบ
+   โค้ดตรงนี้เป็นแค่ "หน้าจอให้กรอก" กับ "จำว่าตอนนี้เข้าอยู่ไหม"
+   ต่อให้ใครแก้ค่าในไฟล์นี้ให้เป็น authed = true ก็ยังไม่ได้ข้อมูลอยู่ดี
+   เพราะเซิร์ฟเวอร์ไม่เคยส่งมาให้ตั้งแต่แรก
+
+   เว็บที่ไม่ได้ตั้ง APP_PASSWORD ใน Cloudflare → required = false
+   ทุกอย่างทำงานเหมือนเดิมทุกประการ ไม่มีหน้าล็อกโผล่มา
+   ───────────────────────────────────────────────────────────── */
+
+const Auth = {
+  required: false,      // เว็บนี้ตั้งรหัสไว้ไหม
+  authed: true,         // ตอนนี้ผ่านด่านแล้วหรือยัง
+  known: false,         // ถามเซิร์ฟเวอร์สำเร็จหรือยัง (ถ้ายัง อย่าเพิ่งเด้งหน้าล็อก)
+
+  /** ถามเซิร์ฟเวอร์ว่าล็อกอยู่ไหม และเราเข้าอยู่หรือเปล่า */
+  async check() {
+    try {
+      const res = await fetch(LOGIN_PATH, { method: 'GET', cache: 'no-store' });
+      if (!res.ok) return false;
+      const info = await res.json();
+      if (!info || typeof info.required !== 'boolean') return false;
+      this.required = info.required;
+      this.authed = info.authed !== false;
+      this.known = true;
+      return true;
+    } catch {
+      // ไม่มี /api/login = ยังไม่ได้อยู่บน Cloudflare หรือยังไม่ได้อัปไฟล์
+      // ปล่อยผ่าน ไม่งั้นเว็บจะใช้ไม่ได้เลยทั้งที่ยังไม่ได้ตั้งจะล็อกด้วยซ้ำ
+      return false;
+    }
+  },
+
+  async login(password) {
+    const res = await fetch(LOGIN_PATH, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+      cache: 'no-store'
+    });
+    let data = {};
+    try { data = await res.json(); } catch { /* ตอบมาไม่ใช่ JSON */ }
+    if (res.ok && data.ok) {
+      this.required = true;
+      this.authed = true;
+      this.known = true;
+      return { ok: true };
+    }
+    return { ok: false, status: res.status, error: data.error || 'เข้าระบบไม่สำเร็จ' };
+  },
+
+  async logout() {
+    try { await fetch(LOGIN_PATH, { method: 'DELETE', cache: 'no-store' }); }
+    catch { /* ลบคุกกี้ไม่ได้ก็ไม่เป็นไร เดี๋ยวมันหมดอายุเอง */ }
+    this.authed = false;
+    // ล้างสำเนาที่แคชไว้ในเบราว์เซอร์ด้วย
+    // ถ้าไม่ล้าง ออกจากระบบแล้วข้อมูลยังอ่านได้จากเครื่องนี้อยู่ — ล็อกไปก็ไม่มีความหมาย
+    Store.clearLocalCopy();
+  },
+
+  /** ต้องเด้งหน้ากรอกรหัสไหม */
+  get blocked() {
+    return this.required && !this.authed;
+  }
+};
+
 const Store = {
   config: { url: '', token: '' },
   records: [],
   campaigns: [],
   metrics: [],
   leads: [],
+  changes: [],            // ประวัติการแก้ไขจริงจาก Google Ads (ชีต CHANGES)
   rev: 0,                 // เพิ่มทุกครั้งที่ข้อมูลเปลี่ยน ใช้ล้างแคชรอบวัดผล
   online: false,
   status: 'local',        // local | connecting | online | error
@@ -754,6 +825,7 @@ const Store = {
       this.campaigns = Array.isArray(raw.campaigns) ? raw.campaigns : [];
       this.metrics = FEATURES.ads && Array.isArray(raw.metrics) ? raw.metrics : [];
       this.leads = FEATURES.ga4 && Array.isArray(raw.leads) ? raw.leads : [];
+      this.changes = FEATURES.ads && Array.isArray(raw.changes) ? raw.changes : [];
       if (Array.isArray(raw.products) && raw.products.length) Taxonomy.set(raw.products);
     } catch {
       this.records = [];
@@ -766,11 +838,29 @@ const Store = {
     try {
       localStorage.setItem(LS_CACHE, JSON.stringify({
         records: this.records, campaigns: this.campaigns, products: Taxonomy.list,
-        metrics: this.metrics, leads: this.leads, savedAt: new Date().toISOString()
+        metrics: this.metrics, leads: this.leads,
+        // เก็บแค่ 300 รายการล่าสุด — ประวัติการแก้ไขโตเร็วมาก (แก้ keyword ทีละสิบคำ)
+        // ถ้าเก็บหมดพื้นที่ในเบราว์เซอร์เต็มแล้วจะพังทั้งแคช
+        changes: this.changes.slice(0, 300),
+        savedAt: new Date().toISOString()
       }));
     } catch (e) {
       toast('พื้นที่เก็บในเบราว์เซอร์เต็ม — แนะนำให้เชื่อม Google Sheet');
     }
+  },
+
+  /**
+   * ลบสำเนาข้อมูลที่เก็บไว้ในเบราว์เซอร์ทิ้ง (ใช้ตอนออกจากระบบ)
+   * ไม่แตะการตั้งค่าการเชื่อมต่อ — แค่ข้อมูลของทีมเท่านั้นที่ต้องหายไป
+   */
+  clearLocalCopy() {
+    try { localStorage.removeItem(LS_CACHE); } catch { /* ลบไม่ได้ก็ช่างมัน */ }
+    this.records = [];
+    this.campaigns = [];
+    this.metrics = [];
+    this.leads = [];
+    this.changes = [];
+    this.rev++;
   },
 
   /** ข้อมูลแคมเปญหนึ่งรายการ (สินค้า/ช่องทาง) */
@@ -847,6 +937,17 @@ const Store = {
     }
 
     if (!res.ok) {
+      // 401 = คุกกี้หมดอายุ หรือยังไม่ได้กรอกรหัส — เด้งหน้าล็อกอินขึ้นมาเลย
+      // (เกิดได้ระหว่างใช้งาน ไม่ใช่แค่ตอนเปิดเว็บ เช่นเปิดค้างไว้ข้ามเดือน)
+      if (res.status === 401) {
+        Auth.required = true;
+        Auth.authed = false;
+        Auth.known = true;
+        showLockScreen('เซสชันหมดอายุแล้ว — กรอกรหัสผ่านอีกครั้ง');
+        const e = new Error('ยังไม่ได้เข้าสู่ระบบ');
+        e.needLogin = true;
+        throw e;
+      }
       // 404 ที่ตัวกลาง = ยังไม่ได้ deploy function ตัวนี้ (มักเพราะยังอยู่บน GitHub Pages)
       if (isProxyUrl(this.config.url) && res.status === 404) {
         const e = new Error('ยังไม่พบตัวกลางที่ /api/sheet — เว็บนี้ยังไม่ได้อยู่บน Cloudflare Pages ' +
@@ -906,6 +1007,7 @@ const Store = {
       // ระบบที่ปิดอยู่ = ทิ้งข้อมูลที่ชีตส่งมาไปเลย ไม่เก็บไว้ในหน่วยความจำด้วยซ้ำ
       if (Array.isArray(data.metrics)) this.metrics = FEATURES.ads ? data.metrics : [];
       if (Array.isArray(data.leads)) this.leads = FEATURES.ga4 ? data.leads : [];
+      if (Array.isArray(data.changes)) this.changes = FEATURES.ads ? data.changes : [];
       this.serverVersion = String(data.version || '');
       this.records = (data.records || []).map(normalizeRecord);
       this.rev++;
@@ -1061,7 +1163,7 @@ function versionAtLeast(have, want) {
  *  1.3.0 = budget/bid · 1.5.0 = ชีต METRICS · 1.6.0 = cpc_ceiling + auto_key
  *  1.7.0 = ชีต LEADS (GA4)
  *  เรียกร้องเท่าที่ระบบที่เปิดอยู่ต้องใช้จริง — ปิดระบบเสริมแล้วไม่ควรมีแถบแดงมากวน */
-const SHEET_MIN_VERSION = FEATURES.ga4 ? '1.7.0' : FEATURES.ads ? '1.6.0' : '1.3.0';
+const SHEET_MIN_VERSION = FEATURES.ads ? '1.8.0' : FEATURES.ga4 ? '1.7.0' : '1.3.0';
 function sheetNeedsUpgrade() {
   if (!Store.online || !Store.serverVersion) return false;
   return !versionAtLeast(Store.serverVersion, SHEET_MIN_VERSION);
@@ -1105,8 +1207,8 @@ function normalizeRecord(raw) {
    ───────────────────────────────────────────────────────────── */
 
 /** หน้าทั้งหมดที่มีในระบบ + ระบบเสริมที่คุมหน้านั้นอยู่ */
-const ALL_PANELS = ['new', 'timeline', 'dashboard', 'trend', 'spend', 'budget', 'leads', 'data'];
-const PANEL_FEATURE = { spend: 'ads', leads: 'ga4' };
+const ALL_PANELS = ['new', 'timeline', 'dashboard', 'trend', 'spend', 'budget', 'changes', 'leads', 'data'];
+const PANEL_FEATURE = { spend: 'ads', changes: 'ads', leads: 'ga4' };
 
 /** เหลือเฉพาะหน้าที่เปิดใช้ — ลำดับนี้คือลำดับปุ่มลัดตัวเลขด้วย */
 const PANELS = ALL_PANELS.filter(p => !PANEL_FEATURE[p] || FEATURES[PANEL_FEATURE[p]]);
@@ -1144,6 +1246,7 @@ function showTab(name) {
   if (name === 'spend') renderSpendPage();
   if (name === 'budget') renderBudgetPage();
   if (name === 'leads') renderLeadPage();
+  if (name === 'changes') renderChangePage();
   if (name === 'data') { renderFeatureToggles(); renderTaxonomyEditor(); renderConnStatusBox(); }
 }
 
@@ -3554,10 +3657,30 @@ function undismissChange(key) {
  * ตรวจสองทาง — auto_key ที่บันทึกไว้ตรง ๆ (แม่นสุด) กับการเดาจากบันทึกที่จดเอง
  * (แคมเปญเดียวกัน วันเดียวกัน และข้อความพูดถึงเรื่องเดียวกัน)
  */
+/**
+ * ประวัติการแก้ไขจริงของ Google ครอบคลุมเรื่องนี้ของวันนี้ไปแล้วหรือยัง
+ *
+ * ที่ต้องมี: ตัวเลขในชีต METRICS เป็นแค่การ "เดา" ว่ามีการปรับ (ค่าที่ตั้งไว้เปลี่ยน)
+ * ส่วนชีต CHANGES คือของจริงจาก Google เอง เมื่อมีของจริงแล้วก็ไม่ต้องเดาซ้ำ
+ * ไม่งั้นการปรับงบครั้งเดียวจะขึ้นในกล่อง "งานที่รอ" สองอัน
+ */
+const CHANGE_SETTING_CAT = { budget: 'budget', bid: 'bid' };
+
+function loggedInChangeHistory(ch) {
+  if (!Store.changes.length) return false;
+  const want = ch.field === 'budget' ? 'budget' : 'bid';
+  return Store.changes.some(c =>
+    c.campaign === ch.campaign &&
+    c.date === ch.date &&
+    CHANGE_SETTING_CAT[String(c.category || '')] === want
+  );
+}
+
 function changeCovered(ch) {
   for (const r of Store.records) {
     if (String(r.auto_key || '') === ch.key) return 'confirmed';
   }
+  if (loggedInChangeHistory(ch)) return 'confirmed';
   const f = WATCHED_BY_KEY[ch.field];
   for (const r of Store.records) {
     if (r.campaign !== ch.campaign) continue;
@@ -6417,6 +6540,32 @@ function renderConnStatusBox() {
   if (!box) return;
   box.innerHTML = '';
 
+  // ── สถานะด่านรหัสผ่าน ──
+  if (Auth.known && Auth.required) {
+    box.append(el('div', { class: 'banner good' },
+      el('span', { class: 'icon' }, '🔒'),
+      el('span', {},
+        el('b', {}, 'เว็บนี้ล็อกด้วยรหัสผ่าน '),
+        'URL ของชีตกับรหัส API ถูกล็อกไว้ฝั่งเซิร์ฟเวอร์ ไม่ถูกส่งมาถึงเบราว์เซอร์เลย',
+        el('div', { style: 'margin-top:8px' },
+          el('button', {
+            type: 'button', class: 'btn btn-sm',
+            onclick: async () => {
+              await Auth.logout();
+              hideLockScreen();
+              showLockScreen('ออกจากระบบแล้ว');
+            }
+          }, 'ออกจากระบบเครื่องนี้')))));
+  } else if (Auth.known && !Auth.required) {
+    box.append(el('div', { class: 'banner warn' },
+      el('span', { class: 'icon' }, '🔓'),
+      el('span', {},
+        el('b', {}, 'ยังไม่ได้ล็อกด้วยรหัสผ่าน '),
+        'ใครมีลิงก์ก็เข้าดูข้อมูลได้ — เปิดล็อกได้ที่ Cloudflare → Settings → ',
+        el('code', {}, 'Environment variables'), ' → เพิ่ม ',
+        el('code', {}, 'APP_PASSWORD'), ' แล้วกด Encrypt (ตั้งเสร็จต้อง Redeploy หนึ่งครั้ง)')));
+  }
+
   if (!Store.online && /api\/sheet/.test(Store.lastError || '')) {
     box.append(el('div', { class: 'banner bad' },
       el('span', { class: 'icon' }, '🔌'),
@@ -6528,6 +6677,21 @@ async function runConnectionDiagnostic() {
       'แล้ว **ต้องกด Deployments → ⋯ → Retry deployment** ด้วย (ตัวแปรมีผลกับ deployment ถัดไปเท่านั้น)');
   } else {
     add('ตัวกลาง /api/sheet', 'ok', 'ใช้ได้ ตั้งค่าครบ', '');
+  }
+
+  // ชั้นที่ 1.5 — ด่านรหัสผ่าน (ถ้าเปิดไว้)
+  // ต้องเช็กก่อนชั้นถัดไป เพราะถ้าไม่ผ่านด่านนี้ ทุกชั้นหลังจะขึ้นแดงหมดโดยไม่ใช่ความผิดมัน
+  if (await Auth.check()) {
+    if (!Auth.required) {
+      add('ด่านรหัสผ่าน', 'warn', 'ยังไม่ได้เปิดใช้ — ใครมีลิงก์ก็เข้าได้',
+        'อยากเปิด: Cloudflare → Settings → Environment variables → เพิ่ม APP_PASSWORD (กด Encrypt) ' +
+        'แล้ว Retry deployment หนึ่งครั้ง');
+    } else if (!Auth.authed) {
+      add('ด่านรหัสผ่าน', 'bad', 'เปิดอยู่ และเครื่องนี้ยังไม่ได้เข้าระบบ',
+        'โหลดหน้าใหม่แล้วกรอกรหัสผ่าน');
+    } else {
+      add('ด่านรหัสผ่าน', 'ok', 'เปิดอยู่ และเครื่องนี้เข้าระบบแล้ว', '');
+    }
   }
 
   // ชั้นที่ 2 — ชีตตอบไหม และรหัสตรงไหม
@@ -6910,10 +7074,296 @@ function updateConnBadge() {
     + ` · เวอร์ชัน ${APP_VERSION}`;
 }
 
+/* ─────────────────────────────────────────────────────────────
+   หน้า "การปรับใน Google Ads"
+
+   ที่นี่คือ "สมุดบันทึกดิบ" — ทุกอย่างที่มีคนกดแก้ในบัญชีจริง
+   ต่างจากไทม์ไลน์ตรงที่ไทม์ไลน์เป็น "บันทึกที่สรุปแล้ว" (แก้ negative 12 คำ = 1 บันทึก)
+   ส่วนหน้านี้เห็นครบทั้ง 12 คำ ว่าคำไหนบ้าง ใครแก้ กี่โมง
+
+   ข้อมูลมาจากชีต CHANGES ที่สคริปต์ ChangeHistory.js ดึงมาให้ทุกเช้า
+   ───────────────────────────────────────────────────────────── */
+
+/** หมวด → ชื่อไทยที่ใช้ในตัวกรอง (เรียงตามที่ควรเห็นบ่อย) */
+const CHANGE_CATEGORIES = [
+  ['budget',          'งบประมาณ'],
+  ['bid',             'Bid / เพดาน CPC'],
+  ['bid_strategy',    'กลยุทธ์ Bid'],
+  ['bid_modifier',    'ตัวคูณ Bid'],
+  ['keyword',         'Keyword'],
+  ['negative',        'Negative Keyword'],
+  ['ad',              'ข้อความโฆษณา'],
+  ['ad_status',       'เปิด/หยุดโฆษณา'],
+  ['asset',           'ส่วนขยายโฆษณา'],
+  ['targeting',       'กลุ่มเป้าหมาย'],
+  ['campaign_status', 'เปิด/หยุดแคมเปญ'],
+  ['campaign_other',  'ตั้งค่าแคมเปญ'],
+  ['adgroup_status',  'เปิด/หยุดกลุ่มโฆษณา'],
+  ['adgroup_other',   'ตั้งค่ากลุ่มโฆษณา'],
+  ['other',           'อื่น ๆ']
+];
+const CHANGE_CAT_LABEL = Object.fromEntries(CHANGE_CATEGORIES);
+
+function initChangePage() {
+  const cat = $('#changeCategory');
+  for (const [key, label] of CHANGE_CATEGORIES) {
+    cat.append(el('option', { value: key }, label));
+  }
+  for (const id of ['#changeDays', '#changeCampaign', '#changeCategory']) {
+    $(id).addEventListener('change', renderChangePage);
+  }
+  // พิมพ์ค้นหาแล้วรอให้หยุดพิมพ์ก่อนค่อยวาดใหม่ — ไม่งั้นวาดทุกตัวอักษร
+  let t;
+  $('#changeSearch').addEventListener('input', () => {
+    clearTimeout(t);
+    t = setTimeout(renderChangePage, 180);
+  });
+}
+
+/** รายการที่ผ่านตัวกรองทั้งหมดบนหน้านี้ */
+function filteredChanges() {
+  const days = Number($('#changeDays')?.value || 14);
+  const camp = $('#changeCampaign')?.value || '';
+  const cat = $('#changeCategory')?.value || '';
+  const q = String($('#changeSearch')?.value || '').trim().toLowerCase();
+
+  let cutoff = '';
+  if (days > 0) {
+    const d = new Date(todayISO());
+    d.setDate(d.getDate() - days);
+    cutoff = d.toISOString().slice(0, 10);
+  }
+
+  return Store.changes.filter(c => {
+    if (cutoff && String(c.date || '') < cutoff) return false;
+    if (camp && c.campaign !== camp) return false;
+    if (cat && String(c.category || 'other') !== cat) return false;
+    if (q) {
+      const hay = `${c.detail || ''} ${c.campaign || ''} ${c.ad_group || ''} ${c.tag || ''}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+}
+
+function renderChangePage() {
+  const warn = $('#changeWarn');
+  const list = $('#changeList');
+  const sum = $('#changeSummary');
+  if (!warn || !list) return;
+  warn.innerHTML = '';
+  list.innerHTML = '';
+  sum.innerHTML = '';
+
+  syncChangeCampaignSelect();
+
+  if (!Store.changes.length) {
+    $('#changeFilters').hidden = true;
+    warn.append(el('div', { class: 'banner warn' },
+      el('span', { class: 'icon' }, '📋'),
+      el('span', {},
+        el('b', {}, 'ยังไม่มีประวัติการแก้ไข '),
+        'หน้านี้จะมีข้อมูลเมื่อติดตั้งสคริปต์ ',
+        el('code', {}, 'ChangeHistory.js'),
+        ' ในหน้า Google Ads Scripts แล้วให้รันวันละครั้ง — ดูขั้นตอนในไฟล์นั้นได้เลย ',
+        el('br'),
+        el('small', {}, 'หมายเหตุ: Google เก็บประวัติให้ย้อนหลังได้มากสุด 30 วัน'))));
+    return;
+  }
+  $('#changeFilters').hidden = false;
+
+  const rows = filteredChanges();
+
+  // สรุปหัวข้อ — ตอบคำถาม "ช่วงนี้ปรับอะไรไปบ้าง" ได้ในบรรทัดเดียว
+  const byCat = {};
+  for (const r of rows) {
+    const k = String(r.category || 'other');
+    byCat[k] = (byCat[k] || 0) + 1;
+  }
+  const top = Object.entries(byCat).sort((a, b) => b[1] - a[1]);
+  sum.append(el('div', { class: 'chg-sum' },
+    el('span', { class: 'chg-chip' }, el('b', {}, String(rows.length)), ' รายการ'),
+    ...top.slice(0, 6).map(([k, n]) =>
+      el('span', { class: 'chg-chip' }, CHANGE_CAT_LABEL[k] || k, ' ', el('b', {}, String(n))))));
+
+  if (!rows.length) {
+    list.append(el('div', { class: 'empty' },
+      el('strong', {}, 'ไม่มีรายการที่ตรงกับตัวกรอง'),
+      'ลองขยายช่วงเวลา หรือล้างคำค้นหา'));
+    return;
+  }
+
+  // จัดกลุ่มตามวัน — อ่านง่ายกว่ารายการยาวเหยียดไม่มีหัวข้อ
+  const days = [];
+  const seen = {};
+  for (const r of rows) {
+    const d = String(r.date || '');
+    if (!seen[d]) { seen[d] = []; days.push(d); }
+    seen[d].push(r);
+  }
+  // Store.changes เรียงใหม่→เก่ามาแล้วจากชีต แต่กันไว้เผื่อแคชเก่าเรียงไม่ตรง
+  days.sort((a, b) => (a < b ? 1 : a > b ? -1 : 0));
+
+  for (const d of days.slice(0, 60)) {
+    const items = seen[d];
+    const box = el('section', { class: 'chg-day' },
+      el('div', { class: 'chg-day-head' },
+        el('span', { class: 'chg-day-date' }, thaiDate(d)),
+        el('span', { class: 'chg-day-count' },
+          `${relativeDay(d)} · ${items.length} รายการ`)));
+
+    for (const c of items.slice(0, 200)) {
+      box.append(el('div', { class: 'chg-row' },
+        el('span', { class: 'chg-time' }, timeOfChange(c)),
+        el('div', { class: 'chg-body' },
+          el('div', { class: 'chg-detail' }, String(c.detail || '')),
+          el('div', { class: 'chg-meta' },
+            el('span', { class: 'chg-tag' }, CHANGE_CAT_LABEL[c.category] || c.tag || 'อื่น ๆ'),
+            el('span', { class: 'chg-campaign' }, String(c.campaign || '')),
+            c.ad_group ? el('span', {}, `กลุ่ม: ${c.ad_group}`) : null,
+            c.changed_by ? el('span', {}, `โดย ${c.changed_by}`) : null,
+            c.client ? el('span', {}, c.client) : null,
+            c.logged
+              ? el('span', { class: 'chg-logged', title: 'สร้างบันทึกในไทม์ไลน์ให้แล้ว' },
+                  '✓ อยู่ในไทม์ไลน์แล้ว')
+              : null))));
+    }
+    if (items.length > 200) {
+      box.append(el('div', { class: 'chg-row' },
+        el('span', {}, ''),
+        el('div', { class: 'chg-body' },
+          el('small', {}, `แสดง 200 รายการแรกจาก ${items.length} ของวันนี้ — ใช้ตัวกรองด้านบนเพื่อดูส่วนที่เหลือ`))));
+    }
+    list.append(box);
+  }
+
+  if (days.length > 60) {
+    list.append(el('div', { class: 'empty' },
+      el('strong', {}, `แสดง 60 วันล่าสุดจาก ${days.length} วัน`),
+      'เลือกช่วงเวลาให้แคบลงเพื่อดูวันที่เก่ากว่านี้'));
+  }
+}
+
+/** "14:32" จากคอลัมน์ datetime — ว่างได้ถ้าชีตไม่มีเวลา */
+function timeOfChange(c) {
+  const m = String(c.datetime || '').match(/(\d{2}):(\d{2})/);
+  return m ? `${m[1]}:${m[2]}` : '—';
+}
+
+function syncChangeCampaignSelect() {
+  const sel = $('#changeCampaign');
+  if (!sel) return;
+  const names = [...new Set(Store.changes.map(c => String(c.campaign || '')).filter(Boolean))].sort();
+  const keep = sel.value;
+  sel.innerHTML = '';
+  sel.append(el('option', { value: '' }, 'ทุกแคมเปญ'));
+  for (const n of names) sel.append(el('option', { value: n }, n));
+  // ถ้าแคมเปญที่เลือกไว้หายไปจากข้อมูลชุดใหม่ ให้กลับไปเป็น "ทุกแคมเปญ"
+  sel.value = names.includes(keep) ? keep : '';
+}
+
+/** ตัวเลขบนเมนู — มีการปรับกี่รายการใน 7 วันล่าสุดที่ยังไม่ได้ลงไทม์ไลน์ */
+function updateChangeBadge() {
+  const badge = $('#changeBadge');
+  if (!badge) return;
+  const d = new Date(todayISO());
+  d.setDate(d.getDate() - 7);
+  const cutoff = d.toISOString().slice(0, 10);
+  const n = Store.changes.filter(c => String(c.date || '') >= cutoff && !c.logged).length;
+  badge.textContent = n > 99 ? '99+' : String(n);
+  badge.hidden = n === 0;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   หน้าจอกรอกรหัสผ่าน
+   ───────────────────────────────────────────────────────────── */
+
+function showLockScreen(message = '') {
+  const screen = $('#lockScreen');
+  if (!screen || !screen.hidden) {
+    // เปิดค้างอยู่แล้ว — แค่เปลี่ยนข้อความ ไม่ต้องโฟกัสซ้ำให้เด้ง
+    if (message && $('#lockMsg')) $('#lockMsg').textContent = message;
+    return;
+  }
+  screen.hidden = false;
+  document.body.style.overflow = 'hidden';
+  if (message) $('#lockMsg').textContent = message;
+  // หน่วงเสี้ยววินาทีให้เบราว์เซอร์วาดเสร็จก่อน ไม่งั้นโฟกัสไม่ติดบนมือถือ
+  setTimeout(() => $('#lockPassword')?.focus(), 60);
+}
+
+function hideLockScreen() {
+  const screen = $('#lockScreen');
+  if (!screen) return;
+  screen.hidden = true;
+  document.body.style.overflow = '';
+  $('#lockPassword').value = '';
+  $('#lockMsg').textContent = '';
+}
+
+function initLockScreen() {
+  const form = $('#lockForm');
+  const input = $('#lockPassword');
+  const msg = $('#lockMsg');
+  const btn = $('#lockSubmit');
+  const eye = $('#lockEye');
+  if (!form) return;
+
+  eye?.addEventListener('click', () => {
+    const showing = input.type === 'text';
+    input.type = showing ? 'password' : 'text';
+    eye.setAttribute('aria-pressed', String(!showing));
+    eye.setAttribute('aria-label', showing ? 'แสดงรหัสผ่าน' : 'ซ่อนรหัสผ่าน');
+    input.focus();
+  });
+
+  input.addEventListener('input', () => { msg.textContent = ''; });
+
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    const pw = input.value;
+    if (!pw) return;
+
+    btn.disabled = true;
+    btn.textContent = 'กำลังตรวจสอบ…';
+    msg.textContent = '';
+
+    let res;
+    try {
+      res = await Auth.login(pw);
+    } catch {
+      res = { ok: false, error: 'ต่อเซิร์ฟเวอร์ไม่ได้ — ตรวจอินเทอร์เน็ตแล้วลองใหม่' };
+    }
+
+    btn.disabled = false;
+    btn.textContent = 'เข้าใช้งาน';
+
+    if (!res.ok) {
+      msg.textContent = res.error;
+      const card = $('#lockForm');
+      card.classList.remove('is-wrong');
+      void card.offsetWidth;            // บังคับให้เบราว์เซอร์เริ่ม animation ใหม่
+      card.classList.add('is-wrong');
+      input.select();
+      return;
+    }
+
+    hideLockScreen();
+    toast('เข้าใช้งานแล้ว');
+    // เพิ่งผ่านด่าน — ตอนนี้ค่อยไปดึงข้อมูลจริงได้
+    await Store.sync();
+    Form.refreshCampaignList();
+    Form.buildTaxonomySelects();
+    Form.refreshBaseline();
+    refreshAll();
+  });
+}
+
 function refreshAll() {
   updateConnBadge();
   updateGreeting();
   updateInboxBadge();
+  updateChangeBadge();
   Form.buildTaxonomySelects();
   Form.refreshCampaignList();
   syncCampaignSelects();
@@ -6924,6 +7374,7 @@ function refreshAll() {
   if (!$('#panel-spend').hidden) renderSpendPage();
   if (!$('#panel-budget').hidden) renderBudgetPage();
   if (!$('#panel-leads').hidden) renderLeadPage();
+  if (FEATURES.ads && !$('#panel-changes').hidden) renderChangePage();
 }
 
 /** ลูกศรขึ้น/ลงเลื่อนเมนูซ้าย — พฤติกรรมมาตรฐานของ role="tablist" */
@@ -7004,6 +7455,7 @@ function initTheme() {
 
 async function boot() {
   initTheme();
+  initLockScreen();
   Taxonomy.loadDefaults();
   Store.loadConfig();
   Store.loadCache();
@@ -7017,7 +7469,7 @@ async function boot() {
   initImport();
   initSettings();
   initDailyCard();
-  if (FEATURES.ads) initSpendPage();
+  if (FEATURES.ads) { initSpendPage(); initChangePage(); }
   if (FEATURES.ga4) initLeadPage();
   initBudgetPage();
   initSidebar();
@@ -7061,6 +7513,26 @@ async function boot() {
 
   const hash = location.hash.replace('#', '');
   showTab(PANELS.includes(hash) ? hash : 'new');
+
+  // ── ด่านรหัสผ่าน ──
+  // ถามเซิร์ฟเวอร์ก่อนว่าเว็บนี้ล็อกไว้ไหม แล้วเราผ่านอยู่หรือเปล่า
+  // ถามไม่ได้ (ยังไม่ได้อยู่บน Cloudflare) ก็ปล่อยผ่าน — ไม่งั้นเว็บใช้ไม่ได้เลย
+  await Auth.check();
+
+  if (Auth.required) {
+    // ตั้งรหัสไว้ = ทุกอย่างต้องวิ่งผ่านตัวกลาง URL ชีตล็อกอยู่ฝั่งเซิร์ฟเวอร์
+    // ค่าที่เคยกรอกเองไว้ใช้ไม่ได้แล้ว และไม่ควรใช้ด้วย
+    if (!Store.usingDefault && !isProxyUrl(Store.config.url)) Store.useDefaultConfig();
+  }
+
+  if (Auth.blocked) {
+    // ไม่ให้เหลือข้อมูลของทีมค้างอยู่หลังหน้าล็อก — เช่นกรณีคุกกี้หมดอายุ
+    // แล้วมีคนอื่นมาเปิดเครื่องเดียวกันต่อ
+    Store.clearLocalCopy();
+    refreshAll();
+    showLockScreen();
+    return;                 // ยังไม่ยิงหาชีตเลยจนกว่าจะผ่านด่าน
+  }
 
   // ตัวกลางกลับมาใช้ได้แล้วหรือยัง — ถ้าใช่ เลิกใช้ค่าที่เคยกรอกเองไปเลย
   if (await Store.autoUseProxy()) {
