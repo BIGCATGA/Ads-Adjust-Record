@@ -8,7 +8,7 @@
    1. ค่าคงที่
    ───────────────────────────────────────────────────────────── */
 
-const APP_VERSION = '1.20.0';
+const APP_VERSION = '1.22.0';
 const LS_CONFIG = 'aar.config.v1';
 
 /* ═══════════════════════════════════════════════════════════════
@@ -31,7 +31,8 @@ const LS_CONFIG = 'aar.config.v1';
 const LS_FEATURES = 'aar.features.v1';
 const DEFAULT_FEATURES = {
   ads: true,       // ระบบ Google Ads — ใช้งานอยู่
-  ga4: false       // ระบบ GA4 — ยังไม่เปิด (ติดเรื่องสิทธิ์เข้าถึง property)
+  ga4: false,      // ระบบ GA4 — ยังไม่เปิด (ติดเรื่องสิทธิ์เข้าถึง property)
+  changes: true    // ประวัติการแก้ไขจาก Google Ads — เปิดแล้ว (บัญชีได้สิทธิ์ Admin เรียบร้อย)
 };
 
 function loadFeatures() {
@@ -825,7 +826,7 @@ const Store = {
       this.campaigns = Array.isArray(raw.campaigns) ? raw.campaigns : [];
       this.metrics = FEATURES.ads && Array.isArray(raw.metrics) ? raw.metrics : [];
       this.leads = FEATURES.ga4 && Array.isArray(raw.leads) ? raw.leads : [];
-      this.changes = FEATURES.ads && Array.isArray(raw.changes) ? raw.changes : [];
+      this.changes = FEATURES.changes && Array.isArray(raw.changes) ? raw.changes : [];
       if (Array.isArray(raw.products) && raw.products.length) Taxonomy.set(raw.products);
     } catch {
       this.records = [];
@@ -1007,7 +1008,7 @@ const Store = {
       // ระบบที่ปิดอยู่ = ทิ้งข้อมูลที่ชีตส่งมาไปเลย ไม่เก็บไว้ในหน่วยความจำด้วยซ้ำ
       if (Array.isArray(data.metrics)) this.metrics = FEATURES.ads ? data.metrics : [];
       if (Array.isArray(data.leads)) this.leads = FEATURES.ga4 ? data.leads : [];
-      if (Array.isArray(data.changes)) this.changes = FEATURES.ads ? data.changes : [];
+      if (Array.isArray(data.changes)) this.changes = FEATURES.changes ? data.changes : [];
       this.serverVersion = String(data.version || '');
       this.records = (data.records || []).map(normalizeRecord);
       this.rev++;
@@ -1163,7 +1164,7 @@ function versionAtLeast(have, want) {
  *  1.3.0 = budget/bid · 1.5.0 = ชีต METRICS · 1.6.0 = cpc_ceiling + auto_key
  *  1.7.0 = ชีต LEADS (GA4)
  *  เรียกร้องเท่าที่ระบบที่เปิดอยู่ต้องใช้จริง — ปิดระบบเสริมแล้วไม่ควรมีแถบแดงมากวน */
-const SHEET_MIN_VERSION = FEATURES.ads ? '1.8.0' : FEATURES.ga4 ? '1.7.0' : '1.3.0';
+const SHEET_MIN_VERSION = FEATURES.changes ? '1.8.0' : FEATURES.ga4 ? '1.7.0' : FEATURES.ads ? '1.6.0' : '1.3.0';
 function sheetNeedsUpgrade() {
   if (!Store.online || !Store.serverVersion) return false;
   return !versionAtLeast(Store.serverVersion, SHEET_MIN_VERSION);
@@ -1208,7 +1209,7 @@ function normalizeRecord(raw) {
 
 /** หน้าทั้งหมดที่มีในระบบ + ระบบเสริมที่คุมหน้านั้นอยู่ */
 const ALL_PANELS = ['new', 'timeline', 'dashboard', 'trend', 'spend', 'budget', 'changes', 'leads', 'data'];
-const PANEL_FEATURE = { spend: 'ads', changes: 'ads', leads: 'ga4' };
+const PANEL_FEATURE = { spend: 'ads', changes: 'changes', leads: 'ga4' };
 
 /** เหลือเฉพาะหน้าที่เปิดใช้ — ลำดับนี้คือลำดับปุ่มลัดตัวเลขด้วย */
 const PANELS = ALL_PANELS.filter(p => !PANEL_FEATURE[p] || FEATURES[PANEL_FEATURE[p]]);
@@ -6779,6 +6780,16 @@ const FEATURE_INFO = [
           'และตั้งให้รันวันละครั้ง · ชีตต้องเป็น Code.gs เวอร์ชัน 1.6.0 ขึ้นไป'
   },
   {
+    key: 'changes',
+    title: 'ดึงประวัติการแก้ไขจาก Google Ads',
+    what: 'เปิดแล้วได้: หน้า "การปรับใน Google Ads" — เห็นทุกอย่างที่มีคนกดแก้จริงในบัญชี ' +
+          '(เพิ่ม keyword · เพิ่ม negative · แก้ข้อความโฆษณา · ปรับงบ · ปรับ bid) ' +
+          'พร้อมเวลาที่แก้และคนที่แก้ · และ AutoLog จะสร้างบันทึกจากของจริงแทนการเดาจากตัวเลข',
+    need: 'บัญชีที่รันสคริปต์ต้องมีสิทธิ์ Admin ในบัญชี Google Ads (สิทธิ์ Standard อ่านไม่ได้) ' +
+          '· ต้องวางไฟล์ ChangeHistory.js ใน Google Ads Scripts · ชีตต้องเป็นเวอร์ชัน 1.8.0 ขึ้นไป ' +
+          '· Google เก็บประวัติให้ย้อนหลังแค่ 30 วัน'
+  },
+  {
     key: 'ga4',
     title: 'ดึง Lead จาก Google Analytics',
     what: 'เปิดแล้วได้: หน้า "ที่มา Lead" — แยกว่า lead มาจาก SEO หรือ SEM ' +
@@ -7120,19 +7131,25 @@ function initChangePage() {
   });
 }
 
+/**
+ * ช่วงเวลาที่เลือก → วันแรกที่ยังเอา ('' = ไม่จำกัด)
+ * 'today' ต้องแยกออกมา เพราะ "วันนี้" คือวันเดียว ไม่ใช่ 1 วันย้อนหลัง
+ */
+function changeCutoff() {
+  const v = String($('#changeDays')?.value || '7');
+  if (v === 'all') return '';
+  if (v === 'today') return todayISO();
+  const d = new Date(todayISO());
+  d.setDate(d.getDate() - (Number(v) - 1));      // นับรวมวันนี้ด้วย 7 วัน = วันนี้ + 6 วันก่อน
+  return d.toISOString().slice(0, 10);
+}
+
 /** รายการที่ผ่านตัวกรองทั้งหมดบนหน้านี้ */
 function filteredChanges() {
-  const days = Number($('#changeDays')?.value || 14);
+  const cutoff = changeCutoff();
   const camp = $('#changeCampaign')?.value || '';
   const cat = $('#changeCategory')?.value || '';
   const q = String($('#changeSearch')?.value || '').trim().toLowerCase();
-
-  let cutoff = '';
-  if (days > 0) {
-    const d = new Date(todayISO());
-    d.setDate(d.getDate() - days);
-    cutoff = d.toISOString().slice(0, 10);
-  }
 
   return Store.changes.filter(c => {
     if (cutoff && String(c.date || '') < cutoff) return false;
@@ -7144,6 +7161,105 @@ function filteredChanges() {
     }
     return true;
   });
+}
+
+/**
+ * กี่รายการขึ้นไปถึงจะพับเก็บ
+ * 2 ก็พับได้แล้ว — เพิ่ม negative 2 คำในแคมเปญเดียวก็ควรอยู่บรรทัดเดียวกัน
+ */
+const CHG_COLLAPSE_MIN = 2;
+
+/** กางแล้วแสดงมากสุดกี่รายการ — กันหน้าค้างตอนเจอกลุ่มเป็นพัน */
+const CHG_MAX_IN_GROUP = 400;
+
+/** ในหมวดหนึ่ง แสดงรายการเดี่ยว ๆ ตรง ๆ ได้กี่อัน ก่อนจะพับที่เหลือ */
+const CHG_FLAT_MAX = 12;
+
+/** จัดกลุ่มรายการเป็น หมวด → แคมเปญ (คงลำดับใหม่→เก่าไว้) */
+function groupChanges(rows) {
+  const cats = [];
+  const byCat = new Map();
+
+  for (const r of rows) {
+    const key = String(r.category || 'other');
+    if (!byCat.has(key)) {
+      const g = { key, label: CHANGE_CAT_LABEL[key] || r.tag || 'อื่น ๆ', items: [], camps: new Map() };
+      byCat.set(key, g);
+      cats.push(g);
+    }
+    const g = byCat.get(key);
+    g.items.push(r);
+    const cName = String(r.campaign || '—');
+    if (!g.camps.has(cName)) g.camps.set(cName, []);
+    g.camps.get(cName).push(r);
+  }
+
+  // หมวดที่มีเยอะสุดอยู่บน — เรื่องที่ทำเยอะที่สุดของวันนั้นควรเห็นก่อน
+  cats.sort((a, b) => b.items.length - a.items.length);
+  return cats;
+}
+
+/** หนึ่งบรรทัดของรายการปรับ · withCampaign = โชว์ชื่อแคมเปญด้วยไหม */
+function changeRow(c, withCampaign) {
+  return el('div', { class: 'chg-row' },
+    el('span', { class: 'chg-time' }, timeOfChange(c)),
+    el('div', { class: 'chg-body' },
+      el('div', { class: 'chg-detail' }, String(c.detail || '')),
+      el('div', { class: 'chg-meta' },
+        withCampaign && c.campaign ? el('span', { class: 'chg-campaign' }, c.campaign) : null,
+        c.ad_group ? el('span', {}, `กลุ่ม: ${c.ad_group}`) : null,
+        c.changed_by ? el('span', {}, `โดย ${c.changed_by}`) : null,
+        c.client ? el('span', {}, c.client) : null,
+        c.logged
+          ? el('span', { class: 'chg-logged', title: 'สร้างบันทึกในไทม์ไลน์ให้แล้ว' }, '✓ อยู่ในไทม์ไลน์แล้ว')
+          : null)));
+}
+
+/**
+ * ช่วงเวลาของกลุ่ม เช่น "14:32 – 15:02"
+ *
+ * หา min/max จริง ไม่ใช่หยิบตัวแรกกับตัวสุดท้าย — ลำดับที่ชีตส่งมาเชื่อไม่ได้ 100%
+ * (แคชเก่า หรือคนไปเรียงชีตเองก็ทำให้เพี้ยนได้) เคยได้ "14:31 – 14:30" กลับหัวมาแล้ว
+ */
+function groupTimeSpan(items) {
+  let lo = '', hi = '';
+  for (const c of items) {
+    const t = timeOfChange(c);
+    if (t === '—') continue;
+    if (!lo || t < lo) lo = t;
+    if (!hi || t > hi) hi = t;
+  }
+  if (!lo) return '—';
+  return lo === hi ? lo : `${lo} – ${hi}`;
+}
+
+/**
+ * กลุ่มที่พับไว้ — เนื้อในสร้างตอนกางครั้งแรกเท่านั้น
+ *
+ * ทำไมต้อง lazy: วันเดียวอาจมี negative keyword เป็นพันรายการ
+ * ถ้าสร้าง DOM ให้ครบตั้งแต่แรก หน้าจะค้างไปหลายวินาทีทั้งที่ผู้ใช้อาจไม่กางเลย
+ */
+function collapsedGroup(title, items, withCampaign) {
+  const body = el('div', { class: 'chg-group-body' });
+  const box = el('details', { class: 'chg-group' },
+    el('summary', { class: 'chg-group-head' },
+      el('span', { class: 'chg-group-title' }, title),
+      el('span', { class: 'chg-group-count' }, `${items.length} รายการ`),
+      el('span', { class: 'chg-group-time' }, groupTimeSpan(items))),
+    body);
+
+  let filled = false;
+  box.addEventListener('toggle', () => {
+    if (!box.open || filled) return;
+    filled = true;
+    const show = items.slice(0, CHG_MAX_IN_GROUP);
+    for (const c of show) body.append(changeRow(c, withCampaign));
+    if (items.length > show.length) {
+      body.append(el('div', { class: 'chg-more' },
+        `แสดง ${show.length} รายการแรกจาก ${items.length} — ใช้ช่องค้นหาด้านบนเพื่อหาคำที่ต้องการ`));
+    }
+  });
+  return box;
 }
 
 function renderChangePage() {
@@ -7174,17 +7290,38 @@ function renderChangePage() {
 
   const rows = filteredChanges();
 
-  // สรุปหัวข้อ — ตอบคำถาม "ช่วงนี้ปรับอะไรไปบ้าง" ได้ในบรรทัดเดียว
-  const byCat = {};
+  // ── แถบสรุป: กดที่ชิปเพื่อกรองเฉพาะหมวดนั้นได้เลย ─────────
+  const activeCat = $('#changeCategory').value;
+  const counts = new Map();
   for (const r of rows) {
     const k = String(r.category || 'other');
-    byCat[k] = (byCat[k] || 0) + 1;
+    counts.set(k, (counts.get(k) || 0) + 1);
   }
-  const top = Object.entries(byCat).sort((a, b) => b[1] - a[1]);
-  sum.append(el('div', { class: 'chg-sum' },
-    el('span', { class: 'chg-chip' }, el('b', {}, String(rows.length)), ' รายการ'),
-    ...top.slice(0, 6).map(([k, n]) =>
-      el('span', { class: 'chg-chip' }, CHANGE_CAT_LABEL[k] || k, ' ', el('b', {}, String(n))))));
+  const chips = el('div', { class: 'chg-sum' });
+  chips.append(el('button', {
+    type: 'button',
+    class: 'chg-chip' + (activeCat ? '' : ' is-on'),
+    'aria-pressed': String(!activeCat),
+    onclick: () => { $('#changeCategory').value = ''; renderChangePage(); }
+  }, 'ทั้งหมด ', el('b', {}, String(rows.length))));
+
+  // เรียงตามจำนวน ไม่ใช่ตามลำดับที่นิยามไว้ — หมวดที่ทำเยอะสุดควรอยู่ซ้ายสุด
+  const ordered = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+  for (const [k, n] of ordered) {
+    const on = activeCat === k;
+    chips.append(el('button', {
+      type: 'button',
+      class: 'chg-chip' + (on ? ' is-on' : ''),
+      'aria-pressed': String(on),
+      onclick: () => { $('#changeCategory').value = on ? '' : k; renderChangePage(); }
+    }, CHANGE_CAT_LABEL[k] || k, ' ', el('b', {}, String(n))));
+  }
+  // ตอนกรองอยู่ ชิปจะนับเฉพาะที่เหลือ — ต้องมีทางกลับไปดูทั้งหมด
+  if (activeCat && !counts.has(activeCat)) {
+    chips.append(el('span', { class: 'chg-chip is-on' },
+      CHANGE_CAT_LABEL[activeCat] || activeCat, ' ', el('b', {}, '0')));
+  }
+  sum.append(chips);
 
   if (!rows.length) {
     list.append(el('div', { class: 'empty' },
@@ -7193,46 +7330,54 @@ function renderChangePage() {
     return;
   }
 
-  // จัดกลุ่มตามวัน — อ่านง่ายกว่ารายการยาวเหยียดไม่มีหัวข้อ
+  // ── จัดกลุ่มตามวัน ──────────────────────────────────────
   const days = [];
-  const seen = {};
+  const seen = new Map();
   for (const r of rows) {
     const d = String(r.date || '');
-    if (!seen[d]) { seen[d] = []; days.push(d); }
-    seen[d].push(r);
+    if (!seen.has(d)) { seen.set(d, []); days.push(d); }
+    seen.get(d).push(r);
   }
-  // Store.changes เรียงใหม่→เก่ามาแล้วจากชีต แต่กันไว้เผื่อแคชเก่าเรียงไม่ตรง
   days.sort((a, b) => (a < b ? 1 : a > b ? -1 : 0));
 
   for (const d of days.slice(0, 60)) {
-    const items = seen[d];
+    const items = seen.get(d);
     const box = el('section', { class: 'chg-day' },
       el('div', { class: 'chg-day-head' },
         el('span', { class: 'chg-day-date' }, thaiDate(d)),
-        el('span', { class: 'chg-day-count' },
-          `${relativeDay(d)} · ${items.length} รายการ`)));
+        el('span', { class: 'chg-day-count' }, `${relativeDay(d)} · ${items.length} รายการ`)));
 
-    for (const c of items.slice(0, 200)) {
-      box.append(el('div', { class: 'chg-row' },
-        el('span', { class: 'chg-time' }, timeOfChange(c)),
-        el('div', { class: 'chg-body' },
-          el('div', { class: 'chg-detail' }, String(c.detail || '')),
-          el('div', { class: 'chg-meta' },
-            el('span', { class: 'chg-tag' }, CHANGE_CAT_LABEL[c.category] || c.tag || 'อื่น ๆ'),
-            el('span', { class: 'chg-campaign' }, String(c.campaign || '')),
-            c.ad_group ? el('span', {}, `กลุ่ม: ${c.ad_group}`) : null,
-            c.changed_by ? el('span', {}, `โดย ${c.changed_by}`) : null,
-            c.client ? el('span', {}, c.client) : null,
-            c.logged
-              ? el('span', { class: 'chg-logged', title: 'สร้างบันทึกในไทม์ไลน์ให้แล้ว' },
-                  '✓ อยู่ในไทม์ไลน์แล้ว')
-              : null))));
-    }
-    if (items.length > 200) {
-      box.append(el('div', { class: 'chg-row' },
-        el('span', {}, ''),
-        el('div', { class: 'chg-body' },
-          el('small', {}, `แสดง 200 รายการแรกจาก ${items.length} ของวันนี้ — ใช้ตัวกรองด้านบนเพื่อดูส่วนที่เหลือ`))));
+    // ── ในแต่ละวันแยกเป็นหมวด แล้วในหมวดยุบตามแคมเปญ ──
+    for (const g of groupChanges(items)) {
+      const cat = el('div', { class: 'chg-cat' },
+        el('div', { class: 'chg-cat-head' },
+          el('span', { class: 'chg-cat-name' }, g.label),
+          el('span', { class: 'chg-cat-count' },
+            g.camps.size > 1
+              ? `${g.items.length} รายการ · ${g.camps.size} แคมเปญ`
+              : `${g.items.length} รายการ`)));
+
+      // แคมเปญที่ทำเยอะสุดอยู่บน
+      const camps = [...g.camps.entries()].sort((a, b) => b[1].length - a[1].length);
+      const singles = [];
+      for (const [name, list2] of camps) {
+        if (list2.length >= CHG_COLLAPSE_MIN) {
+          // หลายรายการของแคมเปญเดียว → พับเป็นบรรทัดเดียว กดกางดูได้
+          cat.append(collapsedGroup(name, list2, false));
+        } else {
+          // รายการเดียว → เก็บไว้ก่อน เดี๋ยวค่อยตัดสินว่าจะโชว์ตรง ๆ หรือพับ
+          singles.push(list2[0]);
+        }
+      }
+      // หมวดอย่าง "เปิด/หยุดแคมเปญ" มักเป็นแคมเปญละครั้ง — ถ้าวันไหนแตะทีเดียวหลายสิบแคมเปญ
+      // แสดงตรง ๆ ทั้งหมดจะยาวเกิน จึงโชว์ชุดแรกแล้วพับที่เหลือไว้
+      const flat = singles.slice(0, CHG_FLAT_MAX);
+      for (const c of flat) cat.append(changeRow(c, true));
+      if (singles.length > flat.length) {
+        const rest = singles.slice(flat.length);
+        cat.append(collapsedGroup(`อีก ${rest.length} แคมเปญ`, rest, true));
+      }
+      box.append(cat);
     }
     list.append(box);
   }
@@ -7374,7 +7519,7 @@ function refreshAll() {
   if (!$('#panel-spend').hidden) renderSpendPage();
   if (!$('#panel-budget').hidden) renderBudgetPage();
   if (!$('#panel-leads').hidden) renderLeadPage();
-  if (FEATURES.ads && !$('#panel-changes').hidden) renderChangePage();
+  if (FEATURES.changes && !$('#panel-changes').hidden) renderChangePage();
 }
 
 /** ลูกศรขึ้น/ลงเลื่อนเมนูซ้าย — พฤติกรรมมาตรฐานของ role="tablist" */
@@ -7469,7 +7614,8 @@ async function boot() {
   initImport();
   initSettings();
   initDailyCard();
-  if (FEATURES.ads) { initSpendPage(); initChangePage(); }
+  if (FEATURES.ads) initSpendPage();
+  if (FEATURES.changes) initChangePage();
   if (FEATURES.ga4) initLeadPage();
   initBudgetPage();
   initSidebar();
