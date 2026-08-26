@@ -40,9 +40,18 @@ function json(body, status = 200) {
   });
 }
 
+/**
+ * ตัดช่องว่าง/บรรทัดใหม่ที่ติดมาตอน copy-paste ออก
+ *
+ * ฝั่ง Apps Script trim ให้อยู่แล้ว ถ้าฝั่งนี้ไม่ trim ด้วย
+ * ช่องว่างท้ายค่าตัวเดียวจะทำให้รหัส "ไม่ตรงกัน" ทั้งที่ตาดูเหมือนกันเป๊ะ
+ * — หาสาเหตุยากมากเพราะมองไม่เห็น
+ */
+const clean = v => String(v ?? '').trim();
+
 export async function onRequestPost({ request, env }) {
-  const sheetUrl = env.SHEET_URL;
-  const token = env.API_TOKEN;
+  const sheetUrl = clean(env.SHEET_URL);
+  const token = clean(env.API_TOKEN);
 
   if (!sheetUrl || !token) {
     return json({
@@ -107,9 +116,15 @@ export async function onRequestPost({ request, env }) {
 
 /** GET ไว้เช็กว่าตัวกลางติดตั้งแล้วจริง — ไม่แตะชีต ไม่เปิดเผยอะไร */
 export async function onRequestGet({ env }) {
+  const url = clean(env.SHEET_URL);
+  const token = clean(env.API_TOKEN);
   return json({
     ok: true,
     proxy: 'ads-adjust-record',
-    configured: !!(env.SHEET_URL && env.API_TOKEN)
+    configured: !!(url && token),
+    // ช่วยไล่หาปัญหา "รหัสไม่ตรง" โดยไม่เปิดเผยตัวรหัส
+    // ยาวกี่ตัว + ขึ้นต้นและลงท้ายด้วยอะไร พอให้เทียบกับที่ตั้งในชีตได้ด้วยตาเปล่า
+    tokenLength: token.length,
+    tokenHint: token.length >= 4 ? token.slice(0, 2) + '…' + token.slice(-2) : ''
   });
 }
