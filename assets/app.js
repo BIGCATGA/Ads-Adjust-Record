@@ -8,7 +8,7 @@
    1. ค่าคงที่
    ───────────────────────────────────────────────────────────── */
 
-const APP_VERSION = '1.22.0';
+const APP_VERSION = '1.23.0';
 const LS_CONFIG = 'aar.config.v1';
 
 /* ═══════════════════════════════════════════════════════════════
@@ -24,6 +24,9 @@ const LS_CONFIG = 'aar.config.v1';
      ga4 = ดึง Lead จาก Google Analytics (ชีต LEADS)
            คุมหน้า "ที่มา Lead"
 
+     automeasure = พอถึงกำหนดวัดผล ระบบใส่ตัวเลขและปิดรอบให้เอง
+           ต้องเปิด ads ไว้ด้วย เพราะตัวเลขมาจากชีต METRICS
+
    ปิดอยู่ = แอปไม่แตะข้อมูลสองก้อนนี้เลย ต่อให้ในชีตมีข้อมูลอยู่ก็ตาม
    (ข้อมูลเดิมในชีตไม่ถูกลบ เปิดกลับเมื่อไหร่ก็เห็นเหมือนเดิม)
    ═══════════════════════════════════════════════════════════════ */
@@ -32,7 +35,8 @@ const LS_FEATURES = 'aar.features.v1';
 const DEFAULT_FEATURES = {
   ads: true,       // ระบบ Google Ads — ใช้งานอยู่
   ga4: false,      // ระบบ GA4 — ยังไม่เปิด (ติดเรื่องสิทธิ์เข้าถึง property)
-  changes: true    // ประวัติการแก้ไขจาก Google Ads — เปิดแล้ว (บัญชีได้สิทธิ์ Admin เรียบร้อย)
+  changes: true,   // ประวัติการแก้ไขจาก Google Ads — เปิดแล้ว (บัญชีได้สิทธิ์ Admin เรียบร้อย)
+  automeasure: true  // วัดผลให้อัตโนมัติเมื่อถึงกำหนด — ไม่ต้องกดใส่ตัวเลขเอง
 };
 
 function loadFeatures() {
@@ -1208,7 +1212,7 @@ function normalizeRecord(raw) {
    ───────────────────────────────────────────────────────────── */
 
 /** หน้าทั้งหมดที่มีในระบบ + ระบบเสริมที่คุมหน้านั้นอยู่ */
-const ALL_PANELS = ['new', 'timeline', 'dashboard', 'trend', 'spend', 'budget', 'changes', 'leads', 'data'];
+const ALL_PANELS = ['new', 'changes', 'dashboard', 'spend', 'budget', 'leads', 'data'];
 const PANEL_FEATURE = { spend: 'ads', changes: 'changes', leads: 'ga4' };
 
 /** เหลือเฉพาะหน้าที่เปิดใช้ — ลำดับนี้คือลำดับปุ่มลัดตัวเลขด้วย */
@@ -1241,9 +1245,8 @@ function showTab(name) {
     $(`#panel-${p}`).hidden = p !== name;
   }
   location.hash = name;
-  if (name === 'timeline') { renderInbox(); renderTimeline(); }
+  if (name === 'new') { renderInbox(); renderTimeline(); }
   if (name === 'dashboard') renderDashboard();
-  if (name === 'trend') renderTrend();
   if (name === 'spend') renderSpendPage();
   if (name === 'budget') renderBudgetPage();
   if (name === 'leads') renderLeadPage();
@@ -2315,7 +2318,7 @@ function deltaTable(cmp) {
 }
 
 /* ─────────────────────────────────────────────────────────────
-   8. ไทม์ไลน์
+   8. รายการบันทึกย้อนหลัง (ท้ายหน้า "บันทึกใหม่")
    ───────────────────────────────────────────────────────────── */
 
 const RANGE_PRESETS = [
@@ -2406,7 +2409,20 @@ function campaignColor(name) {
   return cssVar(SERIES_VARS[idx % SERIES_VARS.length]);
 }
 
-function renderTimeline() {
+/** เลื่อนขึ้นไปที่ฟอร์มด้านบน — ตอนนี้ฟอร์มกับรายการอยู่หน้าเดียวกันแล้ว */
+function focusForm() {
+  showTab('new');
+  const top = $('#panel-new');
+  if (top) top.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  else window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+/** แสดงทีละกี่บันทึก — หน้านี้เป็นหน้าแรกแล้ว ไม่ควรวาดพันรายการรวดเดียว */
+const TIMELINE_PAGE = 60;
+let timelineShown = TIMELINE_PAGE;
+
+function renderTimeline({ reset = true } = {}) {
+  if (reset) timelineShown = TIMELINE_PAGE;
   syncCampaignSelects();
   const list = filteredRecords();
   $('#timelineCount').textContent = `${list.length} บันทึก`;
@@ -2443,7 +2459,8 @@ function renderTimeline() {
     return;
   }
 
-  for (const rec of list) {
+  const page = list.slice(0, timelineShown);
+  for (const rec of page) {
     const cmp = recCompare(rec);
     const card = el('div', { class: 'rec' });
     card.style.borderLeftColor = campaignColor(rec.campaign);
@@ -2496,7 +2513,7 @@ function renderTimeline() {
     }
 
     const actions = el('div', { class: 'rec-actions' },
-      el('button', { class: 'btn btn-sm', text: '✎ แก้ไข', onclick: () => { Form.load(rec); showTab('new'); } }));
+      el('button', { class: 'btn btn-sm', text: '✎ แก้ไข', onclick: () => { Form.load(rec); focusForm(); } }));
     // บันทึกที่มีตัวเลขอยู่แล้ว — เปิดดูเป็นป๊อปอัพ ไม่ต้องออกจากไทม์ไลน์
     if (isMeasured(rec)) {
       actions.append(el('button', {
@@ -2524,10 +2541,19 @@ function renderTimeline() {
       Form.load(copy); $('#f_id').value = ''; Form.editingId = null;
       $('#formTitle').textContent = 'บันทึกการปรับใหม่ (ทำซ้ำ)';
       $('#deleteBtn').hidden = true;
-      showTab('new');
+      focusForm();
     } }));
     card.append(actions);
     host.append(card);
+  }
+
+  // เหลืออีก = ปุ่มกดดูต่อ ไม่วาดทั้งหมดรวดเดียวเพราะหน้านี้เป็นหน้าแรกที่เปิดขึ้นมา
+  if (list.length > page.length) {
+    host.append(el('div', { class: 'timeline-more' },
+      el('button', {
+        class: 'btn btn-sm', type: 'button',
+        onclick: () => { timelineShown += TIMELINE_PAGE; renderTimeline({ reset: false }); }
+      }, `แสดงเพิ่ม (เหลืออีก ${list.length - page.length} บันทึก)`)));
   }
 }
 
@@ -2798,7 +2824,11 @@ function initSidebar() {
     let t = null;
     const run = () => {
       $('#flt_q').value = gs.value;
-      if ($('#panel-timeline').hidden) showTab('timeline'); else renderTimeline();
+      if ($('#panel-new').hidden) showTab('new'); else renderTimeline();
+      // เปิดกล่องตัวกรองให้เห็นว่ากำลังค้นอะไรอยู่ แล้วเลื่อนไปที่รายการ
+      const wrap = $('#filterWrap');
+      if (wrap && gs.value.trim()) wrap.open = true;
+      if (gs.value.trim()) $('#recordsBlock')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     };
     gs.addEventListener('input', () => { clearTimeout(t); t = setTimeout(run, 260); });
     gs.addEventListener('keydown', e => {
@@ -2896,7 +2926,7 @@ function renderDaily() {
       el('td', {},
         el('button', {
           class: 'btn btn-sm btn-ghost', type: 'button',
-          onclick: () => { Form.load(rec); showTab('new'); }
+          onclick: () => { Form.load(rec); focusForm(); }
         }, 'แก้ไข')));
     tb.append(tr);
   }
@@ -3747,7 +3777,164 @@ function dueMeasurements() {
 }
 
 /* ─────────────────────────────────────────────────────────────
-   10a-4c. กล่องงานที่รอ (บนหน้าไทม์ไลน์)
+   10a-4c. วัดผลอัตโนมัติ — ระบบใส่ตัวเลขให้เอง ไม่ต้องกด
+
+   ทำอะไร
+     ทุกครั้งที่โหลดข้อมูลเสร็จ ระบบจะไล่ดูว่าแคมเปญไหน "ถึงกำหนดวัดผล"
+     (ปรับไปเกิน MEASURE_MIN_DAYS วัน และมี conversion พอจะสรุปได้)
+     ถ้าชีต METRICS มีตัวเลขของช่วงนั้นครบ ก็สร้างบันทึกวัดผลให้เลย
+     พร้อมเติมผล "หลังปรับ" ย้อนกลับไปที่บันทึกการปรับก่อนหน้าให้ด้วย
+
+   ทำไมยังต้องมีปุ่มกดเองอยู่
+     บางแคมเปญไม่มีตัวเลขในชีต (สคริปต์ยังไม่รัน / แคมเปญหยุดไป)
+     พวกนั้นระบบไม่เดาให้ ปล่อยไว้ในกล่อง "งานที่รอ" ให้กดใส่เอง
+
+   กันซ้ำอย่างไร
+     ทุกบันทึกที่สร้างด้วยวิธีนี้ติดรหัส auto_key = measure|แคมเปญ|วันเริ่ม|วันจบ
+     รอบเดิมจึงถูกสร้างซ้ำไม่ได้ ต่อให้เปิดเว็บพร้อมกันหลายเครื่อง
+   ───────────────────────────────────────────────────────────── */
+
+/** ช่วงวัดผลต้องมีตัวเลขในชีตอย่างน้อยกี่วัน ถึงจะยอมสรุปให้เอง */
+const AUTO_MEASURE_MIN_DAYS = 3;
+
+/** ข้อความที่ติดไว้ในช่อง "ผลจริง" ให้รู้ว่าบันทึกนี้ระบบทำให้ */
+const AUTO_MEASURE_MARK = '⚙️ วัดผลอัตโนมัติจากตัวเลข Google Ads';
+
+const AutoMeasure = {
+  running: false,
+  /** ผลของรอบล่าสุด — เอาไปแสดงในกล่อง "งานที่รอ" */
+  last: [],
+
+  get on() { return !!FEATURES.automeasure; },
+
+  /**
+   * ไล่วัดผลทุกแคมเปญที่ถึงกำหนด
+   * ปลอดภัยที่จะเรียกซ้ำ — อันที่ทำไปแล้วจะถูกกันด้วย auto_key
+   */
+  async run({ quiet = false } = {}) {
+    if (this.running || !this.on) return 0;
+    if (!FEATURES.ads || !hasAdsData()) return 0;
+    // ต่อชีตไม่ได้ = ไม่สร้างให้ ไม่งั้นบันทึกจะอยู่แค่ในเครื่องนี้แล้วหายตอน sync รอบหน้า
+    if (!Store.online) return 0;
+
+    const upTo = adsDataUpTo();
+    if (!upTo) return 0;
+
+    let due;
+    try { due = dueMeasurements().filter(d => d.ready); }
+    catch { return 0; }
+    if (!due.length) return 0;
+
+    this.running = true;
+    const done = [];
+    const skipped = [];
+    try {
+      for (const d of due) {
+        try {
+          const r = await this.measureOne(d, upTo);
+          if (r) done.push(r); else skipped.push(d.campaign);
+        } catch (err) {
+          // เขียนลงชีตไม่สำเร็จ = ปล่อยไว้ให้กดเอง ไม่ทำให้ทั้งรอบพัง
+          console.warn('[AutoMeasure] วัดผลไม่สำเร็จ:', d.campaign, err);
+          skipped.push(d.campaign);
+        }
+      }
+    } finally {
+      this.running = false;
+    }
+
+    this.last = done;
+    if (done.length) {
+      Form.refreshBaseline();
+      refreshAll();
+      if (!quiet) {
+        toastAction(
+          `วัดผลให้อัตโนมัติแล้ว ${done.length} แคมเปญ`,
+          'ดูรายการ',
+          () => { showTab('new'); $('#recordsBlock')?.scrollIntoView({ behavior: 'smooth' }); },
+          6000);
+      }
+    }
+    return done.length;
+  },
+
+  /** วัดผลหนึ่งแคมเปญ — คืน null ถ้าข้อมูลไม่พอหรือทำไปแล้ว */
+  async measureOne(d, upTo) {
+    const campaign = d.campaign;
+    const today = todayISO();
+    const prev = Store.latestMeasured(campaign, today, null);
+
+    // จุดเริ่มช่วง = วันจบของการวัดผลครั้งก่อน (ถ้าไม่เคยวัด ใช้วันที่ปรับ)
+    // ใช้เกณฑ์เดียวกับป๊อปอัพใส่ตัวเลขเป๊ะ ๆ ผลที่ได้จะได้ตรงกัน
+    const from = prev?.before_end || prev?.date || d.from;
+    // ไม่วัดเลยวันที่ข้อมูลมาถึง — ไม่งั้นช่วงท้ายจะเป็นศูนย์ทั้งที่แค่ยังไม่ถูกดึงมา
+    const to = upTo < today ? upTo : today;
+    if (!from || !to || String(to) <= String(from)) return null;
+
+    const key = `measure|${campaign}|${from}|${to}`;
+    if (Store.records.some(r => String(r.auto_key || '') === key)) return null;
+
+    const sum = sumAdsRange(campaign, from, to);
+    if (!sum || sum.days < AUTO_MEASURE_MIN_DAYS) return null;
+
+    // ชุดตัวเลขดิบ — ชุดเดียวกับที่ปุ่ม "เติมตัวเลขให้เลย" ใส่ให้
+    const raw = { _start: from, _end: to };
+    raw.impressions = sum.impressions;
+    raw.clicks = sum.clicks;
+    raw.cost = sum.cost;
+    raw.conversions = sum.conversions;
+    raw.ctr = sum.ctr;
+    raw.cpc = sum.cpc;
+    if (sum.impr_share !== null) raw.impr_share = sum.impr_share;
+    const solved = solveBlock(raw).values;
+
+    const rec = {
+      id: Store.newId(),
+      date: to,
+      campaign,
+      product: Store.campaign(campaign)?.product || '',
+      product_group: '',
+      ad_group: '',
+      tags: '',
+      change_detail: '',          // วัดผลล้วน ไม่นับเป็น "การปรับ" ในรอบ
+      reason: '',
+      expected: '',
+      result_note: `${AUTO_MEASURE_MARK} · ช่วง ${thaiDate(from)} – ${thaiDate(to)} (${sum.days} วัน)`,
+      budget: '',
+      bid: '',
+      status: 'มีผลแล้ว',
+      auto_key: key
+    };
+    rec.product_group = rec.product ? Taxonomy.groupOf(rec.product) : '';
+
+    rec.before_start = from;
+    rec.before_end = to;
+    for (const m of METRICS) {
+      rec[`before_${m.key}`] = solved[m.key] === null ? '' : round(solved[m.key], m.dec);
+    }
+    for (const m of METRICS) rec[`after_${m.key}`] = '';
+    rec.after_start = '';
+    rec.after_end = '';
+
+    await Store.create(rec);
+
+    // เติมผล "หลังปรับ" ย้อนกลับไปที่บันทึกก่อนหน้า เพื่อให้ชีตอ่านง่ายเหมือนกรอกเอง
+    const before = Store.latestFor(campaign, rec.date, rec.id);
+    if (before && !hasNumbers(block(before, 'after'))) {
+      const patch = { ...before };
+      for (const m of METRICS) patch[`after_${m.key}`] = rec[`before_${m.key}`];
+      patch.after_start = rec.before_start;
+      patch.after_end = rec.before_end;
+      patch.status = 'มีผลแล้ว';
+      await Store.update(patch);
+    }
+
+    return { campaign, from, to, days: sum.days, adjustments: d.adjustments, rec, prev };
+  }
+};
+
+/* ─────────────────────────────────────────────────────────────
+   10a-4d. กล่องงานที่รอ (ท้ายหน้า "บันทึกใหม่")
    ───────────────────────────────────────────────────────────── */
 
 function inboxCount() {
@@ -3761,7 +3948,7 @@ function updateInboxBadge() {
   const n = inboxCount();
   badge.textContent = n > 99 ? '99+' : String(n);
   badge.hidden = !n;
-  badge.title = `มี ${n} รายการรอจัดการในไทม์ไลน์`;
+  badge.title = `มี ${n} รายการรอจัดการ (ดูท้ายหน้าบันทึกใหม่)`;
 }
 
 function renderInbox() {
@@ -3773,8 +3960,49 @@ function renderInbox() {
 
   const changes = pendingAdsChanges();
   const due = dueMeasurements();
+  const auto = AutoMeasure.on ? AutoMeasure.last : [];
 
-  if (!changes.length && !due.length) return;
+  if (!changes.length && !due.length && !auto.length) return;
+
+  // ── ระบบวัดผลให้เองไปแล้วรอบนี้
+  if (auto.length) {
+    const list = el('div', { class: 'inbox-list' });
+    for (const a of auto) {
+      const prevBlock = a.prev ? block(a.prev, 'before') : null;
+      const curBlock = block(a.rec, 'before');
+      const cmp = prevBlock ? compareBlocks(prevBlock, curBlock, 'auto') : null;
+      const v = cmp ? plainVerdict(cmp, prevBlock, curBlock) : null;
+      list.append(el('div', { class: 'inbox-item is-auto' },
+        el('div', { class: 'ib-main' },
+          el('div', { class: 'ib-title' },
+            el('b', {}, a.campaign),
+            el('span', { class: 'ib-date' },
+              `${thaiDate(a.from)} – ${thaiDate(a.to)} · ${a.days} วัน` +
+              (a.adjustments ? ` · ปรับไป ${a.adjustments} ครั้ง` : ''))),
+          el('div', { class: 'ib-detail' },
+            v
+              ? el('span', { class: `pv-inline pv-${v.level}` }, `${v.headline} — ${v.detail}`)
+              : 'เก็บเป็นตัวเลขตั้งต้นของแคมเปญนี้ — ครั้งหน้าถึงจะเทียบได้')),
+        el('div', { class: 'ib-actions' },
+          el('button', {
+            class: 'btn btn-sm', title: 'ดูตัวเลขที่ระบบเติมให้',
+            onclick: () => openRecordNumbers(a.rec)
+          }, 'ดูตัวเลข'),
+          el('button', {
+            class: 'btn btn-sm btn-ghost', title: 'แก้ตัวเลขหรือใส่หมายเหตุเพิ่ม',
+            onclick: () => { Form.load(a.rec); focusForm(); }
+          }, 'แก้ไข'))));
+    }
+    host.append(el('div', { class: 'card inbox-card' },
+      el('div', { class: 'card-head' },
+        el('h2', {}, 'วัดผลให้อัตโนมัติแล้ว ',
+          el('span', { class: 'pill-count' }, String(auto.length))),
+        el('span', { class: 'card-note' },
+          'ดึงตัวเลขจาก Google Ads มาปิดรอบให้เอง — ตรวจดูได้ ถ้าไม่ถูกใจกดแก้หรือลบทิ้งได้ตามปกติ')),
+      list,
+      el('p', { class: 'card-note', style: 'margin-top:10px' },
+        'ปิดระบบนี้ได้ที่หน้า ตั้งค่า → ระบบเสริม → "วัดผลให้อัตโนมัติ"')));
+  }
 
   // ── การเปลี่ยนแปลงที่ Google Ads บอกมา แต่ยังไม่ได้จด
   if (changes.length) {
@@ -3842,15 +4070,18 @@ function renderInbox() {
         el('h2', {}, 'ถึงกำหนดวัดผล ',
           el('span', { class: 'pill-count' }, String(due.filter(x => x.ready).length))),
         el('span', { class: 'card-note' },
-          `แคมเปญที่ปรับไปแล้วเกิน ${MEASURE_MIN_DAYS} วันแต่ยังไม่ได้ใส่ตัวเลข`)),
+          AutoMeasure.on
+            ? `แคมเปญที่ปรับไปเกิน ${MEASURE_MIN_DAYS} วันแล้ว แต่ในชีตยังไม่มีตัวเลขพอให้ระบบสรุปเอง — ` +
+              'กรอกเองได้เลย'
+            : `แคมเปญที่ปรับไปแล้วเกิน ${MEASURE_MIN_DAYS} วันแต่ยังไม่ได้ใส่ตัวเลข`)),
       list));
   }
 }
 
 /** เอาการเปลี่ยนแปลงที่ Ads บอกมา ไปเปิดเป็นร่างบันทึกใหม่ให้ใส่เหตุผล */
 function confirmAdsChange(ch) {
-  showTab('new');
   Form.draft(ch);
+  focusForm();
   toast('เติมรายละเอียดจาก Google Ads ให้แล้ว — เหลือใส่เหตุผลกับผลที่คาดหวัง', 4200);
 }
 
@@ -5857,135 +6088,8 @@ function drawProductBars(rows, metricKey) {
 }
 
 /* ─────────────────────────────────────────────────────────────
-   11. กราฟเทรนด์
+   11. ตัวช่วยวาดกราฟแท่ง (ใช้ในหน้าตัวเลขรายวัน + แดชบอร์ด)
    ───────────────────────────────────────────────────────────── */
-
-/** แปลงบันทึกเป็นชุดจุดตามเวลา — แต่ละ "ช่วงวัดผล" คือหนึ่งจุด */
-function buildSeries(records) {
-  const byCampaign = new Map();
-  for (const rec of records) {
-    const camp = rec.campaign || '(ไม่ระบุ)';
-    if (!byCampaign.has(camp)) byCampaign.set(camp, new Map());
-    const bucket = byCampaign.get(camp);
-    const add = (side, fallbackDate) => {
-      const b = block(rec, side);
-      if (!hasNumbers(b)) return;
-      const x = b._end || fallbackDate;
-      if (!x) return;
-      const key = `${b._start}|${x}`;
-      if (bucket.has(key)) return;
-      bucket.set(key, { x, start: b._start, end: x, days: b._days, values: solveBlock(b).values });
-    };
-    add('before', rec.date);
-    add('after', '');
-  }
-  const out = [];
-  for (const [camp, bucket] of byCampaign) {
-    const points = [...bucket.values()].sort((p, q) => String(p.x).localeCompare(String(q.x)));
-    if (points.length) out.push({ campaign: camp, points });
-  }
-  return out;
-}
-
-function initTrendControls() {
-  const sel = $('#trendMetric');
-  sel.innerHTML = '';
-  for (const m of METRICS) sel.append(el('option', { value: m.key }, m.label));
-  sel.value = 'cpa';
-  for (const id of ['#trendMetric', '#trendGroup', '#trendProduct',
-    '#trendCampaign', '#trend_from', '#trend_to']) {
-    $(id).addEventListener('input', () => {
-      if (id === '#trendGroup') { $('#trendProduct').value = ''; $('#trendCampaign').value = ''; }
-      if (id === '#trendProduct') $('#trendCampaign').value = '';
-      renderTrend();
-    });
-  }
-  for (const id of ['#trendMarkers', '#trendTable']) {
-    $(id).addEventListener('click', e => {
-      const on = e.currentTarget.getAttribute('aria-pressed') === 'true';
-      e.currentTarget.setAttribute('aria-pressed', String(!on));
-      renderTrend();
-    });
-  }
-  window.addEventListener('resize', () => {
-    if (!$('#panel-trend').hidden) renderTrend();
-  });
-}
-
-function renderTrend() {
-  syncCampaignSelects();
-  const metricKey = $('#trendMetric').value || 'cpa';
-  const metric = METRIC_BY_KEY[metricKey];
-  const campFilter = $('#trendCampaign').value;
-  const groupFilter = $('#trendGroup').value;
-  const productFilter = $('#trendProduct').value;
-  const from = $('#trend_from').value, to = $('#trend_to').value;
-  const showMarkers = $('#trendMarkers').getAttribute('aria-pressed') === 'true';
-  const showTable = $('#trendTable').getAttribute('aria-pressed') === 'true';
-
-  const scope = [groupFilter, productFilter, campFilter].filter(Boolean).join(' › ');
-  $('#trendTitle').textContent = `เทรนด์ ${metric.label}` +
-    (scope ? ` · ${scope}` : '') +
-    (metric.better === 'down' ? ' — ยิ่งต่ำยิ่งดี' : metric.better === 'up' ? ' — ยิ่งสูงยิ่งดี' : '');
-
-  let records = Store.records.filter(r =>
-    (!campFilter || r.campaign === campFilter) &&
-    (!groupFilter || recGroup(r) === groupFilter) &&
-    (!productFilter || recProduct(r) === productFilter));
-  let series = buildSeries(records)
-    .map(s => ({
-      ...s,
-      points: s.points.filter(p =>
-        p.values[metricKey] !== null &&
-        (!from || p.x >= from) && (!to || p.x <= to))
-    }))
-    .filter(s => s.points.length);
-
-  const droppedSeries = Math.max(0, series.length - 6);
-  if (droppedSeries) series = series.slice(0, 6);
-
-  const adjustments = records
-    .filter(r => r.date && (!from || r.date >= from) && (!to || r.date <= to))
-    .filter(r => !campFilter || r.campaign === campFilter)
-    .map(r => ({ date: r.date, campaign: r.campaign, detail: r.change_detail }));
-
-  drawLineChart({
-    svg: $('#trendChart'),
-    shell: $('#trendShell'),
-    tooltip: $('#trendTooltip'),
-    legend: $('#trendLegend'),
-    series, metricKey, adjustments: showMarkers ? adjustments : []
-  });
-
-  // ตารางข้อมูล (ทางเลือกสำรองสำหรับการอ่านค่าแม่นยำ / เข้าถึงได้)
-  const tw = $('#trendTableWrap');
-  tw.hidden = !showTable;
-  if (showTable) {
-    const tbl = el('table', { class: 'data' });
-    tbl.append(el('thead', {}, el('tr', {},
-      el('th', {}, 'ช่วงข้อมูล'), el('th', {}, 'แคมเปญ'), el('th', {}, 'จำนวนวัน'), el('th', {}, metric.label))));
-    const tb = el('tbody');
-    const rows = series.flatMap(s => s.points.map(p => ({ s, p })))
-      .sort((a, b) => String(b.p.x).localeCompare(String(a.p.x)));
-    for (const { s, p } of rows) {
-      tb.append(el('tr', {},
-        el('td', {}, p.start ? `${thaiDate(p.start)} – ${thaiDate(p.end)}` : thaiDate(p.end)),
-        el('td', { style: 'text-align:left' }, s.campaign),
-        el('td', {}, p.days ? String(p.days) : '—'),
-        el('td', {}, fmtMetric(metricKey, p.values[metricKey]))));
-    }
-    tbl.append(tb);
-    tw.innerHTML = '';
-    tw.append(tbl);
-  }
-
-  if (droppedSeries) {
-    $('#trendLegend').append(el('span', { class: 'legend-item' },
-      `⚠️ แสดง 6 แคมเปญแรกจากทั้งหมด ${series.length + droppedSeries} — กรองด้วยกลุ่ม/สินค้าเพื่อดูที่เหลือ`));
-  }
-
-  renderSparklines(records, campFilter);
-}
 
 function niceTicks(min, max, count = 5) {
   if (min === max) { min = Math.min(0, min); max = max || 1; }
@@ -6001,218 +6105,6 @@ function niceTicks(min, max, count = 5) {
   return out;
 }
 
-function drawLineChart({ svg, shell, tooltip, legend, series, metricKey, adjustments }) {
-  const NS = 'http://www.w3.org/2000/svg';
-  svg.innerHTML = '';
-  legend.innerHTML = '';
-  tooltip.hidden = true;
-
-  const width = Math.max(320, shell.clientWidth || 720);
-  const height = 320;
-  svg.setAttribute('width', width);
-  svg.setAttribute('height', height);
-  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
-
-  if (!series.length) {
-    svg.append(mk('text', { x: width / 2, y: height / 2, 'text-anchor': 'middle' },
-      'ยังไม่มีข้อมูลพอสำหรับตัวชี้วัดนี้'));
-    return;
-  }
-
-  const M = { top: 18, right: 20, bottom: 46, left: 62 };
-  const W = width - M.left - M.right;
-  const H = height - M.top - M.bottom;
-
-  const allX = [...new Set(series.flatMap(s => s.points.map(p => p.x)))].sort();
-  const xTimes = allX.map(x => parseDate(x).getTime());
-  const adjTimes = adjustments.map(a => parseDate(a.date)?.getTime()).filter(Boolean);
-  const tMin = Math.min(...xTimes, ...(adjTimes.length ? adjTimes : [Infinity]));
-  const tMax = Math.max(...xTimes, ...(adjTimes.length ? adjTimes : [-Infinity]));
-  const tSpan = tMax - tMin || 86400000;
-
-  const vals = series.flatMap(s => s.points.map(p => p.values[metricKey]));
-  const vMin = Math.min(...vals), vMax = Math.max(...vals);
-  const ticks = niceTicks(Math.min(0, vMin), vMax, 5);
-  const yLo = ticks[0], yHi = ticks[ticks.length - 1];
-
-  const X = t => M.left + (t - tMin) / tSpan * W;
-  const Y = v => M.top + H - (v - yLo) / (yHi - yLo || 1) * H;
-
-  function mk(tag, attrs = {}, text) {
-    const n = document.createElementNS(NS, tag);
-    for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
-    if (text !== undefined) n.textContent = text;
-    return n;
-  }
-
-  // เส้นกริดแนวนอน + ป้ายแกน Y
-  for (const t of ticks) {
-    svg.append(mk('line', { class: 'grid-line', x1: M.left, x2: M.left + W, y1: Y(t), y2: Y(t) }));
-    svg.append(mk('text', { x: M.left - 8, y: Y(t) + 4, 'text-anchor': 'end' }, fmtMetric(metricKey, t)));
-  }
-  svg.append(mk('line', { class: 'axis-line', x1: M.left, x2: M.left + W, y1: M.top + H, y2: M.top + H }));
-
-  // ป้ายแกน X
-  const labelCount = Math.min(allX.length, Math.max(2, Math.floor(W / 92)));
-  const step = Math.max(1, Math.ceil(allX.length / labelCount));
-  allX.forEach((x, i) => {
-    if (i % step !== 0 && i !== allX.length - 1) return;
-    const d = parseDate(x);
-    svg.append(mk('text', {
-      x: X(d.getTime()), y: M.top + H + 18, 'text-anchor': 'middle'
-    }, `${d.getDate()}/${d.getMonth() + 1}`));
-  });
-
-  // เส้นประวันที่ปรับ
-  const seenAdj = new Set();
-  for (const a of adjustments) {
-    const t = parseDate(a.date)?.getTime();
-    if (!t || seenAdj.has(a.date)) continue;
-    seenAdj.add(a.date);
-    svg.append(mk('line', { class: 'adj-line', x1: X(t), x2: X(t), y1: M.top, y2: M.top + H }));
-    svg.append(mk('text', { class: 'adj-label', x: X(t), y: M.top - 5, 'text-anchor': 'middle' }, '⚙'));
-  }
-
-  // เส้นข้อมูล
-  const colors = series.map((_, i) => cssVar(SERIES_VARS[i % SERIES_VARS.length]));
-  series.forEach((s, i) => {
-    const pts = s.points.map(p => ({ ...p, t: parseDate(p.x).getTime(), v: p.values[metricKey] }));
-    const d = pts.map((p, j) => `${j ? 'L' : 'M'}${X(p.t).toFixed(1)},${Y(p.v).toFixed(1)}`).join(' ');
-    svg.append(mk('path', { class: 'series-line', d, stroke: colors[i] }));
-    for (const p of pts) {
-      svg.append(mk('circle', { class: 'series-dot', cx: X(p.t), cy: Y(p.v), r: 4.5, fill: colors[i] }));
-    }
-    // ป้ายค่าโดยตรงที่จุดแรกและจุดสุดท้าย (ทำให้ระบุเส้นได้โดยไม่พึ่งสีอย่างเดียว)
-    const last = pts[pts.length - 1];
-    if (last) {
-      svg.append(mk('text', {
-        class: 'point-label', x: X(last.t) - 8, y: Y(last.v) - 10, 'text-anchor': 'end'
-      }, fmtMetric(metricKey, last.v)));
-    }
-  });
-
-  // Legend
-  series.forEach((s, i) => {
-    const sw = el('span', { class: 'legend-swatch' });
-    sw.style.background = colors[i];
-    legend.append(el('span', { class: 'legend-item' }, sw, s.campaign));
-  });
-  if (adjustments.length) {
-    legend.append(el('span', { class: 'legend-item' }, '⚙ เส้นประ = วันที่มีการปรับ'));
-  }
-
-  // Hover crosshair + tooltip
-  const cross = mk('line', { class: 'adj-line', x1: 0, x2: 0, y1: M.top, y2: M.top + H, opacity: 0 });
-  svg.append(cross);
-  const overlay = mk('rect', { class: 'hit', x: M.left, y: M.top, width: W, height: H });
-  svg.append(overlay);
-
-  const flat = series.flatMap((s, i) => s.points.map(p => ({
-    campaign: s.campaign, color: colors[i], t: parseDate(p.x).getTime(),
-    v: p.values[metricKey], start: p.start, end: p.end, days: p.days
-  })));
-
-  function onMove(ev) {
-    const rect = svg.getBoundingClientRect();
-    const px = (ev.touches ? ev.touches[0].clientX : ev.clientX) - rect.left;
-    const t = tMin + (px - M.left) / W * tSpan;
-    let best = null;
-    for (const p of flat) {
-      const dist = Math.abs(p.t - t);
-      if (!best || dist < best.dist) best = { dist, p };
-    }
-    if (!best) return;
-    const groupT = best.p.t;
-    const group = flat.filter(p => p.t === groupT);
-    cross.setAttribute('x1', X(groupT));
-    cross.setAttribute('x2', X(groupT));
-    cross.setAttribute('opacity', 1);
-
-    tooltip.innerHTML = '';
-    const g0 = group[0];
-    tooltip.append(el('div', { class: 'tt-title' },
-      g0.start ? `${thaiDate(g0.start)} – ${thaiDate(g0.end)}` : thaiDate(g0.end)));
-    if (g0.days) tooltip.append(el('div', { class: 'tt-row' }, el('span', { class: 'name' }, 'จำนวนวัน'), String(g0.days)));
-    for (const p of group) {
-      const sw = el('span', { class: 'legend-swatch' });
-      sw.style.background = p.color;
-      tooltip.append(el('div', { class: 'tt-row' }, sw,
-        el('span', { class: 'name' }, p.campaign), fmtMetric(metricKey, p.v)));
-    }
-    tooltip.hidden = false;
-    const tx = Math.min(Math.max(X(groupT) + 14, 4), width - tooltip.offsetWidth - 4);
-    tooltip.style.left = tx + 'px';
-    tooltip.style.top = (M.top + 6) + 'px';
-  }
-
-  overlay.addEventListener('mousemove', onMove);
-  overlay.addEventListener('touchmove', onMove, { passive: true });
-  overlay.addEventListener('mouseleave', () => { tooltip.hidden = true; cross.setAttribute('opacity', 0); });
-}
-
-function renderSparklines(records, campFilter) {
-  const host = $('#sparkGrid');
-  host.innerHTML = '';
-  const note = $('#sparkNote');
-  // เลือกแคมเปญที่มีช่วงข้อมูลมากที่สุดในขอบเขตที่กรองอยู่ (ข้อมูลเยอะสุด = เทรนด์อ่านได้จริง)
-  const candidates = buildSeries(records).sort((a, b) => b.points.length - a.points.length);
-  const target = campFilter
-    ? candidates.find(s => s.campaign === campFilter) || candidates[0]
-    : candidates[0];
-
-  if (!target || target.points.length < 2) {
-    note.textContent = '';
-    host.append(el('div', { class: 'empty' }, 'ต้องมีอย่างน้อย 2 ช่วงข้อมูลของแคมเปญเดียวกันจึงจะวาดเทรนด์ได้'));
-    return;
-  }
-  const meta = Store.campaign(target.campaign);
-  const label = [meta?.product, target.campaign].filter(Boolean).join(' · ');
-  note.textContent = `${label} · ${target.points.length} ช่วงข้อมูล` +
-    (candidates.length > 1 ? ` (แคมเปญที่มีข้อมูลมากที่สุดจาก ${candidates.length})` : '');
-
-  const NS = 'http://www.w3.org/2000/svg';
-  const keys = ['cpa', 'conversions', 'cvr', 'ctr', 'cpc', 'impr_share', 'impressions', 'cost'];
-  for (const key of keys) {
-    const m = METRIC_BY_KEY[key];
-    const pts = target.points.map(p => p.values[key]).filter(v => v !== null);
-    if (pts.length < 2) continue;
-    const first = pts[0], last = pts[pts.length - 1];
-    const delta = first ? (last - first) / Math.abs(first) * 100 : null;
-    const good = m.better === 'neutral' || delta === null ? null
-      : (m.better === 'up') === (delta > 0);
-    const cls = good === null ? 'delta-flat' : good ? 'delta-up' : 'delta-down';
-
-    const w = 240, h = 42;
-    const svg = document.createElementNS(NS, 'svg');
-    svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
-    svg.setAttribute('preserveAspectRatio', 'none');
-    const lo = Math.min(...pts), hi = Math.max(...pts);
-    const X = i => (i / (pts.length - 1)) * (w - 6) + 3;
-    const Y = v => h - 5 - ((v - lo) / ((hi - lo) || 1)) * (h - 12);
-    const path = document.createElementNS(NS, 'path');
-    path.setAttribute('d', pts.map((v, i) => `${i ? 'L' : 'M'}${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(' '));
-    path.setAttribute('fill', 'none');
-    path.setAttribute('stroke', cssVar('--series-1'));
-    path.setAttribute('stroke-width', '2');
-    path.setAttribute('stroke-linejoin', 'round');
-    path.setAttribute('stroke-linecap', 'round');
-    path.setAttribute('vector-effect', 'non-scaling-stroke');
-    svg.append(path);
-    const dot = document.createElementNS(NS, 'circle');
-    dot.setAttribute('cx', X(pts.length - 1));
-    dot.setAttribute('cy', Y(last));
-    dot.setAttribute('r', '3');
-    dot.setAttribute('fill', cssVar('--series-1'));
-    svg.append(dot);
-
-    host.append(el('div', { class: 'spark-card' },
-      el('div', { class: 'tile-label' }, m.label),
-      el('div', { class: 'tile-value', style: 'font-size:1.15rem' }, fmtMetric(key, last)),
-      el('div', { class: `tile-delta ${cls}` },
-        delta === null ? '—' : `${delta > 0 ? '▲' : delta < 0 ? '▼' : '＝'} ${fmt(Math.abs(delta), 1)}% เทียบช่วงแรก`),
-      svg));
-  }
-}
 
 /* ─────────────────────────────────────────────────────────────
    12. นำเข้าข้อมูล
@@ -6790,6 +6682,16 @@ const FEATURE_INFO = [
           '· Google เก็บประวัติให้ย้อนหลังแค่ 30 วัน'
   },
   {
+    key: 'automeasure',
+    title: 'วัดผลให้อัตโนมัติ',
+    what: 'เปิดแล้วได้: พอแคมเปญไหนปรับไปเกิน 7 วันและมี conversion พอจะสรุปได้ ' +
+          'ระบบจะดึงตัวเลขของช่วงนั้นจากชีต METRICS มาสร้างบันทึกวัดผลให้เอง ' +
+          'พร้อมเติมผล "หลังปรับ" ย้อนกลับไปที่บันทึกการปรับก่อนหน้า — ไม่ต้องกดอะไรเลย · ' +
+          'บันทึกที่ระบบทำให้จะมีเครื่องหมาย ⚙️ กำกับไว้ แก้หรือลบทีหลังได้ตามปกติ',
+    need: 'ต้องเปิดระบบ "ดึงตัวเลขรายวันจาก Google Ads" ไว้ด้วย และต่อชีตได้จริง ' +
+          '· แคมเปญที่ไม่มีตัวเลขในชีต ระบบจะไม่เดาให้ ยังต้องกดใส่เอง'
+  },
+  {
     key: 'ga4',
     title: 'ดึง Lead จาก Google Analytics',
     what: 'เปิดแล้วได้: หน้า "ที่มา Lead" — แยกว่า lead มาจาก SEO หรือ SEM ' +
@@ -6996,8 +6898,7 @@ function fillSelect(sel, values, allLabel) {
 /** เติม dropdown หมวดหมู่ทุกหน้า แบบไล่ลำดับ กลุ่ม → สินค้า → ช่องทาง → แคมเปญ */
 function syncCampaignSelects() {
   const sets = [
-    { group: '#flt_group', product: '#flt_product', campaign: '#flt_campaign', all: 'ทั้งหมด' },
-    { group: '#trendGroup', product: '#trendProduct', campaign: '#trendCampaign', all: 'ทั้งหมด' }
+    { group: '#flt_group', product: '#flt_product', campaign: '#flt_campaign', all: 'ทั้งหมด' }
   ];
 
   const campaignsOf = (group, product) => Store.campaigns.filter(c => {
@@ -7012,8 +6913,7 @@ function syncCampaignSelects() {
     fillSelect($(s.group), Taxonomy.groups(), s.all);
     const g = $(s.group).value;
     fillSelect($(s.product), Taxonomy.products(g), s.all);
-    fillSelect($(s.campaign), campaignsOf(g, $(s.product).value),
-      s.campaign === '#trendCampaign' ? 'ทั้งหมด (สูงสุด 6)' : s.all);
+    fillSelect($(s.campaign), campaignsOf(g, $(s.product).value), s.all);
   }
 
   if ($('#prodGroupFilter')) fillSelect($('#prodGroupFilter'), Taxonomy.groups(), 'ทุกกลุ่ม');
@@ -7513,9 +7413,8 @@ function refreshAll() {
   Form.refreshCampaignList();
   syncCampaignSelects();
   if (!$('#panel-data').hidden) { renderFeatureToggles(); renderTaxonomyEditor(); renderConnStatusBox(); }
-  if (!$('#panel-timeline').hidden) { renderInbox(); renderTimeline(); }
+  if (!$('#panel-new').hidden) { renderInbox(); renderTimeline(); }
   if (!$('#panel-dashboard').hidden) renderDashboard();
-  if (!$('#panel-trend').hidden) renderTrend();
   if (!$('#panel-spend').hidden) renderSpendPage();
   if (!$('#panel-budget').hidden) renderBudgetPage();
   if (!$('#panel-leads').hidden) renderLeadPage();
@@ -7562,7 +7461,7 @@ function initShortcuts(help) {
     }
     if (inField) return;
 
-    // / = กระโดดไปช่องค้นหาในไทม์ไลน์
+    // / = กระโดดไปช่องค้นหาบันทึกย้อนหลัง
     if (e.key === '/') {
       e.preventDefault();
       $('#globalSearch')?.focus();
@@ -7594,7 +7493,6 @@ function initTheme() {
     document.documentElement.setAttribute('data-theme', next);
     localStorage.setItem('aar.theme', next);
     toast(next === 'dark' ? 'โหมดมืด' : next === 'light' ? 'โหมดสว่าง' : 'ตามระบบ');
-    if (!$('#panel-trend').hidden) renderTrend();
   });
 }
 
@@ -7610,7 +7508,6 @@ async function boot() {
 
   Form.init();
   initTimelineControls();
-  initTrendControls();
   initImport();
   initSettings();
   initDailyCard();
@@ -7636,6 +7533,7 @@ async function boot() {
       Form.renderRecentChips();
       refreshAll();
       toast('โหลดข้อมูลใหม่แล้ว');
+      await AutoMeasure.run();
     } finally {
       btn.disabled = false;
       btn.classList.remove('is-spinning');
@@ -7691,6 +7589,9 @@ async function boot() {
   Form.buildTaxonomySelects();
   Form.refreshBaseline();
   refreshAll();
+
+  // วัดผลอัตโนมัติ — ทำหลังข้อมูลจริงมาถึงแล้วเท่านั้น ไม่งั้นจะสรุปจากแคชเก่า
+  try { await AutoMeasure.run(); } catch (err) { console.warn('[AutoMeasure]', err); }
 }
 
 document.addEventListener('DOMContentLoaded', boot);

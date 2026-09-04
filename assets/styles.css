@@ -948,9 +948,6 @@ svg.chart .series-dot { stroke: var(--surface-1); stroke-width: 2; }
 svg.chart .point-label { fill: var(--text-secondary); font-size: 10.5px; font-weight: 500; }
 svg.chart .hit { fill: transparent; cursor: pointer; }
 
-.legend { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 14px; font-size: 0.79rem; }
-.legend-item { display: inline-flex; align-items: center; gap: 7px; color: var(--text-secondary); font-weight: 300; }
-.legend-swatch { width: 10px; height: 10px; border-radius: 3px; flex: none; }
 
 .tooltip {
   position: absolute; pointer-events: none;
@@ -964,12 +961,6 @@ svg.chart .hit { fill: transparent; cursor: pointer; }
 .tooltip .tt-row { display: flex; gap: 12px; align-items: center; font-variant-numeric: tabular-nums; line-height: 1.7; }
 .tooltip .tt-row .name { color: var(--text-muted); margin-right: auto; font-weight: 300; }
 
-.spark-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
-.spark-card {
-  background: var(--surface-1); border: 1px solid var(--border);
-  border-radius: var(--r-md); padding: 13px 15px;
-}
-.spark-card svg { width: 100%; height: 40px; display: block; margin-top: 8px; }
 
 /* ── Misc ───────────────────────────────────────────────── */
 
@@ -1925,3 +1916,35 @@ td.num .cell-sub { display: block; margin-top: 2px; line-height: 1.4; }
   .chg-group-body { padding-left: 10px; margin-left: 8px; }
   .chg-group-time { display: none; }   /* จอแคบ เอาที่จำเป็นก่อน */
 }
+
+/* ── บันทึกย้อนหลัง (ย้ายมาต่อท้ายหน้า "บันทึกใหม่" ตั้งแต่ v1.23) ────── */
+
+.records-block {
+  margin-top: 36px;
+  padding-top: 26px;
+  border-top: 1px solid var(--border);
+}
+.records-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 16px;
+}
+.records-head h2 { margin: 0; }
+
+.timeline-more {
+  display: flex;
+  justify-content: center;
+  margin-top: 16px;
+}
+
+/* บันทึกที่ระบบวัดผลให้เอง — แยกสีจากงานที่ยังต้องกดเอง */
+.inbox-item.is-auto {
+  border-color: color-mix(in srgb, var(--accent-solid) 38%, var(--border));
+  background: var(--surface-1);
+}
+.pv-inline { font-weight: 500; }
+.pv-inline.pv-good  { color: var(--good-text); }
+.pv-inline.pv-bad   { color: var(--critical-text); }
+.pv-inline.pv-flat,
+.pv-inline.pv-unsure { color: var(--text-secondary); }
