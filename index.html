@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="assets/styles.css?v=1.24.0">
+<link rel="stylesheet" href="assets/styles.css?v=1.25.0">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%232a78d6'/><path d='M8 22 L13 14 L18 18 L24 9' stroke='white' stroke-width='2.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
 </head>
 <body>
@@ -539,7 +539,7 @@
   <div class="panel-head">
     <div>
       <h2>ตารางการปรับ</h2>
-      <p class="panel-sub">ทุกการปรับเรียงเป็นตาราง แยกตามวัน / สัปดาห์ / เดือน พร้อมตัวเลขก่อน–หลังที่คำนวณให้เอง</p>
+      <p class="panel-sub">แยกเป็นแคมเปญ · แต่ละแถวคือหนึ่งวันที่แตะแคมเปญนั้น พร้อมตัวเลขก่อน–หลังและคำตัดสินว่าได้ผลไหม · กดแถวเพื่อเลือกช่วงเทียบเอง</p>
     </div>
   </div>
 
@@ -576,24 +576,20 @@
 
   <div class="log-controls">
     <div class="field">
-      <span class="field-label">มุมมอง</span>
-      <div class="chips" id="logViewChips">
-        <button type="button" class="chip" data-view="list" aria-pressed="true">ทีละครั้ง</button>
-        <button type="button" class="chip" data-view="rollup" aria-pressed="false">สรุปรายแคมเปญ</button>
+      <span class="field-label">หน้าต่างเทียบผล <span class="field-unit">ก่อน/หลังวันที่ปรับ</span></span>
+      <div class="chips" id="logWindowChips">
+        <button type="button" class="chip" data-win="3" aria-pressed="false">3 วัน</button>
+        <button type="button" class="chip" data-win="7" aria-pressed="true">7 วัน</button>
+        <button type="button" class="chip" data-win="14" aria-pressed="false">14 วัน</button>
+        <button type="button" class="chip" data-win="30" aria-pressed="false">30 วัน</button>
       </div>
     </div>
     <div class="field">
-      <span class="field-label">จัดกลุ่มตาม</span>
-      <div class="chips" id="logPeriodChips">
-        <button type="button" class="chip" data-period="day" aria-pressed="false">วัน</button>
-        <button type="button" class="chip" data-period="week" aria-pressed="false">สัปดาห์</button>
-        <button type="button" class="chip" data-period="month" aria-pressed="true">เดือน</button>
-      </div>
-    </div>
-    <div class="field" id="logSourceField">
-      <span class="field-label">แหล่งข้อมูล</span>
-      <div class="chips">
-        <button type="button" class="chip" id="logShowAds" aria-pressed="true">รวมที่ดึงจาก Google Ads</button>
+      <span class="field-label">เรียงแคมเปญตาม</span>
+      <div class="chips" id="logSortChips">
+        <button type="button" class="chip" data-sort="recent" aria-pressed="true">ปรับล่าสุด</button>
+        <button type="button" class="chip" data-sort="most" aria-pressed="false">ปรับบ่อยสุด</button>
+        <button type="button" class="chip" data-sort="worst" aria-pressed="false">ผลแย่ลงมากสุด</button>
       </div>
     </div>
   </div>
@@ -972,6 +968,6 @@
   </div>
 </dialog>
 
-<script src="assets/app.js?v=1.24.0"></script>
+<script src="assets/app.js?v=1.25.0"></script>
 </body>
 </html>
