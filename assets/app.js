@@ -8,7 +8,7 @@
    1. ค่าคงที่
    ───────────────────────────────────────────────────────────── */
 
-const APP_VERSION = '1.23.0';
+const APP_VERSION = '1.24.0';
 const LS_CONFIG = 'aar.config.v1';
 
 /* ═══════════════════════════════════════════════════════════════
@@ -1212,7 +1212,7 @@ function normalizeRecord(raw) {
    ───────────────────────────────────────────────────────────── */
 
 /** หน้าทั้งหมดที่มีในระบบ + ระบบเสริมที่คุมหน้านั้นอยู่ */
-const ALL_PANELS = ['new', 'changes', 'dashboard', 'spend', 'budget', 'leads', 'data'];
+const ALL_PANELS = ['new', 'changes', 'log', 'dashboard', 'spend', 'budget', 'leads', 'data'];
 const PANEL_FEATURE = { spend: 'ads', changes: 'changes', leads: 'ga4' };
 
 /** เหลือเฉพาะหน้าที่เปิดใช้ — ลำดับนี้คือลำดับปุ่มลัดตัวเลขด้วย */
@@ -1251,6 +1251,7 @@ function showTab(name) {
   if (name === 'budget') renderBudgetPage();
   if (name === 'leads') renderLeadPage();
   if (name === 'changes') renderChangePage();
+  if (name === 'log') renderLogPage();
   if (name === 'data') { renderFeatureToggles(); renderTaxonomyEditor(); renderConnStatusBox(); }
 }
 
@@ -6898,7 +6899,8 @@ function fillSelect(sel, values, allLabel) {
 /** เติม dropdown หมวดหมู่ทุกหน้า แบบไล่ลำดับ กลุ่ม → สินค้า → ช่องทาง → แคมเปญ */
 function syncCampaignSelects() {
   const sets = [
-    { group: '#flt_group', product: '#flt_product', campaign: '#flt_campaign', all: 'ทั้งหมด' }
+    { group: '#flt_group', product: '#flt_product', campaign: '#flt_campaign', all: 'ทั้งหมด' },
+    { group: '#log_group', product: '#log_product', campaign: '#log_campaign', all: 'ทั้งหมด' }
   ];
 
   const campaignsOf = (group, product) => Store.campaigns.filter(c => {
@@ -7320,6 +7322,759 @@ function updateChangeBadge() {
 }
 
 /* ─────────────────────────────────────────────────────────────
+   13b. หน้า "ตารางการปรับ"
+
+   ทำไมต้องมีทั้งที่มีรายการบันทึกอยู่แล้ว
+     รายการบันทึกท้ายหน้า "บันทึกใหม่" เป็นการ์ดใบใหญ่ — ดูทีละใบได้ดี
+     แต่พอจะตอบคำถามว่า "เดือนนี้แตะอะไรไปบ้าง" ต้องเลื่อนยาวมาก
+     หน้านี้เป็นตารางแนวนอนแบบเดียวกับชีตที่ทีมใช้อยู่เดิม
+     คอลัมน์เรียงเหมือนกัน: วันที่ · แคมเปญ · ส่วนที่ปรับ · ตัวเลขก่อน–หลัง · เหตุผล · ผลที่คาดหวัง
+
+   สองมุมมอง
+     ทีละครั้ง      1 แถว = 1 การปรับ  — เห็นเหตุผลครบทุกครั้งที่แตะ
+     สรุปรายแคมเปญ  1 แถว = 1 แคมเปญต่อช่วงเวลา — เห็นภาพรวมว่าเดือนนี้แคมเปญไหนขยับไปทางไหน
+   ───────────────────────────────────────────────────────────── */
+
+const LOG_PRESETS = [
+  { id: '30',  label: '30 วัน',   from: () => isoOffset(-29), to: () => todayISO() },
+  { id: '90',  label: '90 วัน',   from: () => isoOffset(-89), to: () => todayISO() },
+  { id: '180', label: '6 เดือน',  from: () => isoOffset(-179), to: () => todayISO() },
+  { id: 'all', label: 'ทั้งหมด',  from: () => '',             to: () => '' }
+];
+
+const Log = {
+  view: 'list',        // list | rollup
+  period: 'month',     // day | week | month
+  showAds: true,
+  preset: '90',
+  open: new Set(),      // แถวที่กางอยู่ — จำไว้ข้ามการวาดใหม่
+  adsOpen: new Set(),   // ช่วงที่กด "ดูรายการจาก Google Ads ทั้งหมด" แล้ว
+  limit: 200
+};
+
+/**
+ * ในหนึ่งช่วงเวลา แสดงแถวที่ดึงจาก Google Ads ได้กี่แถวก่อนจะพับที่เหลือ
+ * ของจริงมีหลักพัน ถ้าปล่อยหมด บันทึกที่จดเอง (ซึ่งเป็นของสำคัญ) จะจมหาย
+ */
+const LOG_ADS_PER_PERIOD = 12;
+
+/** หมวดของ CHANGES → แท็กที่ฟอร์มบันทึกรู้จัก (ใช้ตอนกด "จดเป็นบันทึก") */
+const CHANGE_CAT_TO_TAG = {
+  budget: 'ปรับงบประมาณ',
+  bid: 'ปรับ Bid / Max CPC',
+  bid_strategy: 'เปลี่ยน Bid Strategy',
+  bid_modifier: 'ปรับ Bid / Max CPC',
+  keyword: 'เพิ่ม Keywords',
+  negative: 'เพิ่ม Negative Keywords',
+  ad: 'แก้ Headline / Description',
+  ad_status: 'เพิ่ม/ลบ Ad',
+  asset: 'อื่น ๆ',
+  targeting: 'ปรับ Audience',
+  campaign_status: 'เปิด/ปิดแคมเปญ',
+  campaign_other: 'อื่น ๆ',
+  adgroup_status: 'ปรับ Ad Group',
+  adgroup_other: 'ปรับ Ad Group',
+  other: 'อื่น ๆ'
+};
+
+/* ── ช่วงเวลา ────────────────────────────────────────────── */
+
+/** วันที่ → รหัสช่วงที่มันสังกัด · สัปดาห์เริ่มวันจันทร์ */
+function logPeriodKey(iso, mode) {
+  const d = String(iso || '');
+  if (!d) return '';
+  if (mode === 'day') return d;
+  if (mode === 'month') return d.slice(0, 7);
+  const dt = new Date(d + 'T00:00:00Z');
+  if (isNaN(dt)) return d;
+  dt.setUTCDate(dt.getUTCDate() - ((dt.getUTCDay() + 6) % 7));   // ถอยไปวันจันทร์
+  return dt.toISOString().slice(0, 10);
+}
+
+/** รหัสช่วง → วันแรกและวันสุดท้ายของช่วงนั้น */
+function logPeriodRange(key, mode) {
+  if (mode === 'day') return { from: key, to: key };
+  if (mode === 'month') {
+    const [y, m] = key.split('-').map(Number);
+    const last = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+    return { from: `${key}-01`, to: last };
+  }
+  const dt = new Date(key + 'T00:00:00Z');
+  dt.setUTCDate(dt.getUTCDate() + 6);
+  return { from: key, to: dt.toISOString().slice(0, 10) };
+}
+
+const THAI_MONTH_FULL = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน',
+  'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
+
+function logPeriodLabel(key, mode) {
+  if (mode === 'day') return thaiDate(key);
+  if (mode === 'month') {
+    const [y, m] = key.split('-').map(Number);
+    return `${THAI_MONTH_FULL[m - 1]} ${y + 543}`;
+  }
+  const r = logPeriodRange(key, mode);
+  return `${thaiDate(r.from)} – ${thaiDate(r.to)}`;
+}
+
+/** ช่วงก่อนหน้าที่ยาวเท่ากัน — ใช้เป็นฐานเทียบในมุมมองสรุป */
+function logPrevRange(range) {
+  const days = daysBetween(range.from, range.to) + 1;
+  const to = new Date(range.from + 'T00:00:00Z');
+  to.setUTCDate(to.getUTCDate() - 1);
+  const from = new Date(to);
+  from.setUTCDate(from.getUTCDate() - (days - 1));
+  return { from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10) };
+}
+
+/* ── ข้อมูลที่จะเอาลงตาราง ───────────────────────────────── */
+
+function logFilters() {
+  return {
+    from: $('#log_from')?.value || '',
+    to: $('#log_to')?.value || '',
+    group: $('#log_group')?.value || '',
+    product: $('#log_product')?.value || '',
+    campaign: $('#log_campaign')?.value || '',
+    q: String($('#log_q')?.value || '').trim().toLowerCase()
+  };
+}
+
+/** บันทึกการปรับที่จดในเว็บ ผ่านตัวกรองแล้ว */
+function logRecordRows() {
+  const f = logFilters();
+  return Store.sorted().filter(r => {
+    if (!hasAdjustment(r)) return false;                 // วัดผลล้วน ไม่ใช่การปรับ
+    if (f.from && String(r.date || '') < f.from) return false;
+    if (f.to && String(r.date || '') > f.to) return false;
+    if (f.group && recGroup(r) !== f.group) return false;
+    if (f.product && recProduct(r) !== f.product) return false;
+    if (f.campaign && r.campaign !== f.campaign) return false;
+    if (f.q) {
+      const hay = [r.campaign, r.ad_group, r.tags, r.change_detail, r.reason, r.expected,
+        r.result_note, recProduct(r), recGroup(r)].join(' ').toLowerCase();
+      if (!hay.includes(f.q)) return false;
+    }
+    return true;
+  }).map(r => ({ src: 'rec', id: r.id, date: String(r.date || ''), campaign: r.campaign || '', rec: r }));
+}
+
+/**
+ * การปรับที่ ChangeHistory.js ดึงมา — ยุบเป็น "แคมเปญ + วัน + หมวด" ละหนึ่งแถว
+ * ข้อมูลจริงมีหลักพันรายการ ถ้าปล่อยเป็นแถวละรายการตารางจะอ่านไม่ไหว
+ */
+function logAdsRows() {
+  if (!FEATURES.changes || !Log.showAds || !Store.changes.length) return [];
+  const f = logFilters();
+  const byKey = new Map();
+
+  for (const c of Store.changes) {
+    if (c.logged) continue;                    // AutoLog จดเป็นบันทึกไปแล้ว ไม่ต้องโชว์ซ้ำ
+    const date = String(c.date || '');
+    const campaign = String(c.campaign || '').trim();
+    if (!date || !campaign) continue;
+    if (f.from && date < f.from) continue;
+    if (f.to && date > f.to) continue;
+    if (f.campaign && campaign !== f.campaign) continue;
+    if (f.group || f.product) {
+      const meta = Store.campaign(campaign);
+      const product = meta?.product || '';
+      if (f.product && product !== f.product) continue;
+      if (f.group && (product ? Taxonomy.groupOf(product) : '') !== f.group) continue;
+    }
+    if (f.q) {
+      const hay = `${c.detail || ''} ${campaign} ${c.ad_group || ''} ${c.tag || ''}`.toLowerCase();
+      if (!hay.includes(f.q)) continue;
+    }
+    const cat = String(c.category || 'other');
+    const key = `${date}|${campaign}|${cat}`;
+    if (!byKey.has(key)) {
+      byKey.set(key, {
+        src: 'ads', id: 'ads:' + key, date, campaign, cat,
+        label: CHANGE_CAT_LABEL[cat] || c.tag || 'อื่น ๆ', items: []
+      });
+    }
+    byKey.get(key).items.push(c);
+  }
+
+  return [...byKey.values()].sort((a, b) =>
+    b.date.localeCompare(a.date) || a.campaign.localeCompare(b.campaign));
+}
+
+/** ทุกแถวของมุมมอง "ทีละครั้ง" เรียงใหม่ → เก่า */
+function logAllRows() {
+  const rows = logRecordRows().concat(logAdsRows());
+  return rows.sort((a, b) => {
+    const d = b.date.localeCompare(a.date);
+    if (d !== 0) return d;
+    // บันทึกที่จดเองขึ้นก่อนของที่ดึงมา — อันที่มีเหตุผลสำคัญกว่า
+    if (a.src !== b.src) return a.src === 'rec' ? -1 : 1;
+    return String(a.campaign).localeCompare(String(b.campaign));
+  });
+}
+
+/* ── ช่องตัวเลข "ก่อน → หลัง" ─────────────────────────────── */
+
+/** ตัวชี้วัดที่โชว์ในช่องตัวเลขของตาราง — 4 ตัวที่ใช้ตัดสินจริง */
+const LOG_KEY_METRICS = ['cpa', 'conversions', 'ctr', 'cpc'];
+
+/**
+ * ชิปตัวเลขสั้น ๆ: CPA 210 → 185 ▼12%
+ * สีมาจาก r.good (ระบบรู้เองว่าตัวไหนต่ำกว่าดี) ไม่ใช่จากทิศทางลูกศร
+ */
+function logMetricChips(cmp, keys = LOG_KEY_METRICS) {
+  if (!cmp) return null;
+  const wrap = el('div', { class: 'log-nums' });
+  let any = false;
+  for (const key of keys) {
+    const r = cmp.rows.find(x => x.key === key);
+    if (!r || r.before === null || r.after === null) continue;
+    any = true;
+    const cls = r.good === null ? 'delta-flat' : r.good ? 'delta-up' : 'delta-down';
+    const arrow = r.dir === 'up' ? '▲' : r.dir === 'down' ? '▼' : '＝';
+    wrap.append(el('span', { class: 'log-num' },
+      el('span', { class: 'ln-key' }, r.metric.short),
+      el('span', { class: 'ln-val' }, fmtMetric(key, r.before)),
+      el('span', { class: 'ln-arrow' }, '→'),
+      el('span', { class: 'ln-val ln-after' }, fmtMetric(key, r.after)),
+      r.deltaPct === null
+        ? null
+        : el('span', { class: `ln-delta ${cls}` }, `${arrow}${fmt(Math.abs(r.deltaPct), 0)}%`)));
+  }
+  return any ? wrap : null;
+}
+
+/** ข้อความแทนช่องตัวเลขเมื่อยังเทียบไม่ได้ */
+function logPendingCell(text) {
+  return el('span', { class: 'log-pending' }, text);
+}
+
+/* ── วาดหน้า ─────────────────────────────────────────────── */
+
+function initLogPage() {
+  const host = $('#logPresets');
+  if (!host) return;
+  host.innerHTML = '';
+  for (const p of LOG_PRESETS) {
+    host.append(el('button', {
+      type: 'button', class: 'chip', 'data-preset': p.id,
+      'aria-pressed': String(p.id === Log.preset), text: p.label,
+      onclick: () => {
+        Log.preset = p.id;
+        $('#log_from').value = p.from();
+        $('#log_to').value = p.to();
+        $$('#logPresets .chip').forEach(c =>
+          c.setAttribute('aria-pressed', String(c.dataset.preset === p.id)));
+        Log.limit = 200;
+        renderLogPage();
+      }
+    }));
+  }
+  // ค่าเริ่มต้น 90 วัน — ยาวพอเห็นเทรนด์ แต่ไม่ถึงกับวาดทุกอย่างที่เคยจดมา
+  $('#log_from').value = isoOffset(-89);
+  $('#log_to').value = todayISO();
+
+  for (const id of ['#log_from', '#log_to', '#log_group', '#log_product', '#log_campaign']) {
+    $(id).addEventListener('input', () => {
+      if (id === '#log_from' || id === '#log_to') {
+        Log.preset = '';
+        $$('#logPresets .chip').forEach(c => c.setAttribute('aria-pressed', 'false'));
+      }
+      if (id === '#log_group') { $('#log_product').value = ''; $('#log_campaign').value = ''; }
+      if (id === '#log_product') $('#log_campaign').value = '';
+      Log.limit = 200;
+      renderLogPage();
+    });
+  }
+  let t;
+  $('#log_q').addEventListener('input', () => {
+    clearTimeout(t);
+    t = setTimeout(() => { Log.limit = 200; renderLogPage(); }, 200);
+  });
+
+  $$('#logViewChips .chip').forEach(chip => chip.addEventListener('click', () => {
+    Log.view = chip.dataset.view;
+    Log.open.clear();
+    Log.adsOpen.clear();
+    Log.limit = 200;
+    $$('#logViewChips .chip').forEach(c =>
+      c.setAttribute('aria-pressed', String(c === chip)));
+    renderLogPage();
+  }));
+
+  $$('#logPeriodChips .chip').forEach(chip => chip.addEventListener('click', () => {
+    Log.period = chip.dataset.period;
+    Log.open.clear();
+    Log.adsOpen.clear();
+    Log.limit = 200;
+    $$('#logPeriodChips .chip').forEach(c =>
+      c.setAttribute('aria-pressed', String(c === chip)));
+    renderLogPage();
+  }));
+
+  $('#logShowAds').addEventListener('click', () => {
+    Log.showAds = !Log.showAds;
+    $('#logShowAds').setAttribute('aria-pressed', String(Log.showAds));
+    Log.limit = 200;
+    renderLogPage();
+  });
+}
+
+function renderLogPage() {
+  syncCampaignSelects();
+  const src = $('#logSourceField');
+  if (src) src.hidden = !FEATURES.changes;
+  if (Log.view === 'rollup') renderLogRollup();
+  else renderLogList();
+}
+
+/* ── มุมมอง "ทีละครั้ง" ──────────────────────────────────── */
+
+function renderLogList() {
+  const host = $('#logBody');
+  host.innerHTML = '';
+  const recRows = logRecordRows();
+  const adsRows = logAdsRows();
+  const adsItems = adsRows.reduce((n, r) => n + r.items.length, 0);
+
+  $('#logCount').textContent = (recRows.length + adsRows.length)
+    ? `จดเอง ${recRows.length} ครั้ง` +
+      (adsRows.length ? ` · Google Ads ${adsItems} รายการ (ยุบเป็น ${adsRows.length} แถว)` : '')
+    : '';
+
+  if (!recRows.length && !adsRows.length) {
+    host.append(el('div', { class: 'empty' },
+      el('strong', {}, 'ยังไม่มีการปรับในช่วงนี้'),
+      'ลองขยายช่วงเวลา หรือล้างตัวกรองดู'));
+    return;
+  }
+
+  // จัดเข้าช่วงเวลา — บันทึกที่จดเองกับของที่ดึงมาแยกกองกัน
+  const periods = new Map();
+  const bucket = (row, kind) => {
+    const pk = logPeriodKey(row.date, Log.period);
+    if (!periods.has(pk)) periods.set(pk, { key: pk, recs: [], ads: [] });
+    periods.get(pk)[kind].push(row);
+  };
+  for (const r of recRows) bucket(r, 'recs');
+  for (const r of adsRows) bucket(r, 'ads');
+
+  const order = [...periods.keys()].sort((a, b) => b.localeCompare(a));
+
+  const table = el('table', { class: 'data log-table' });
+  table.append(el('thead', {}, el('tr', {},
+    el('th', { class: 'lc-date' }, 'วันที่'),
+    el('th', { class: 'lc-camp' }, 'แคมเปญ'),
+    el('th', { class: 'lc-what' }, 'ส่วนที่ปรับ'),
+    el('th', { class: 'lc-num' }, 'ตัวเลข ก่อน → หลัง'),
+    el('th', { class: 'lc-why' }, 'เหตุผลในการปรับ'),
+    el('th', { class: 'lc-exp' }, 'ผลที่คาดหวัง'))));
+
+  const tb = el('tbody');
+  let drawn = 0;
+  let cutPeriods = 0;
+
+  for (const pk of order) {
+    if (drawn >= Log.limit) { cutPeriods++; continue; }
+    const g = periods.get(pk);
+    const camps = new Set([...g.recs, ...g.ads].map(r => r.campaign)).size;
+    const items = g.recs.length + g.ads.reduce((n, r) => n + r.items.length, 0);
+
+    tb.append(el('tr', { class: 'log-period' },
+      el('td', { colspan: '6' },
+        el('span', { class: 'lp-title' }, logPeriodLabel(pk, Log.period)),
+        el('span', { class: 'lp-meta' }, `${items} รายการ · ${camps} แคมเปญ`))));
+
+    // บันทึกที่จดเองมาก่อนเสมอ — เป็นของที่มีเหตุผลกำกับ ไม่ควรจมอยู่ใต้ log ดิบ
+    for (const row of g.recs) {
+      tb.append(logRecordTr(row));
+      if (Log.open.has(row.id)) tb.append(logDetailTr(row));
+      drawn++;
+    }
+
+    if (g.ads.length) {
+      const full = Log.adsOpen.has(pk);
+      const show = full ? g.ads : g.ads.slice(0, LOG_ADS_PER_PERIOD);
+      tb.append(el('tr', { class: 'log-sub' },
+        el('td', { colspan: '6' },
+          `Google Ads บันทึกไว้อีก ${g.ads.length} แถว — ยังไม่ได้จดเหตุผล`)));
+      for (const row of show) {
+        tb.append(logAdsTr(row));
+        if (Log.open.has(row.id)) tb.append(logDetailTr(row));
+        drawn++;
+      }
+      if (g.ads.length > show.length) {
+        tb.append(el('tr', { class: 'log-more' },
+          el('td', { colspan: '6' },
+            el('button', {
+              class: 'btn btn-sm', type: 'button',
+              onclick: () => { Log.adsOpen.add(pk); renderLogPage(); }
+            }, `ดูอีก ${g.ads.length - show.length} แถวของช่วงนี้`))));
+      }
+    }
+  }
+
+  table.append(tb);
+  host.append(el('div', { class: 'table-wrap log-wrap' }, table));
+
+  if (cutPeriods) {
+    host.append(el('div', { class: 'timeline-more' },
+      el('button', {
+        class: 'btn btn-sm', type: 'button',
+        onclick: () => { Log.limit += 200; renderLogPage(); }
+      }, `แสดงเพิ่ม (ยังเหลืออีก ${cutPeriods} ช่วงเวลา)`)));
+  }
+}
+
+/** แถวของบันทึกที่จดเอง */
+function logRecordTr(row) {
+  const rec = row.rec;
+  const cmp = recCompare(rec);
+  const round = roundOf(rec);
+  const tags = String(rec.tags || '').split(',').map(t => t.trim()).filter(Boolean);
+  const detail = String(rec.change_detail || '');
+
+  const tr = el('tr', {
+    class: 'log-row' + (Log.open.has(row.id) ? ' is-open' : ''),
+    tabindex: '0',
+    title: 'กดเพื่อกางดูตัวเลขทั้งหมด',
+    onclick: () => logToggle(row.id),
+    onkeydown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); logToggle(row.id); } }
+  });
+
+  tr.append(
+    el('td', { class: 'lc-date' },
+      el('div', { class: 'cell-strong' }, thaiDate(rec.date)),
+      el('div', { class: 'cell-sub' }, relativeDay(rec.date))),
+
+    el('td', { class: 'lc-camp' },
+      el('div', { class: 'cell-strong' }, rec.campaign || '—'),
+      recProduct(rec) ? el('div', { class: 'cell-sub' },
+        (recGroup(rec) ? recGroup(rec) + ' › ' : '') + recProduct(rec)) : null,
+      rec.ad_group ? el('div', { class: 'cell-sub' }, 'กลุ่ม: ' + rec.ad_group) : null),
+
+    el('td', { class: 'lc-what' },
+      tags.length ? el('div', { class: 'log-tags' },
+        tags.slice(0, 3).map(t => el('span', { class: 'tag' }, t)),
+        tags.length > 3 ? el('span', { class: 'tag' }, `+${tags.length - 3}`) : null) : null,
+      el('div', { class: 'log-detail-text' }, detail || '—')),
+
+    el('td', { class: 'lc-num' },
+      cmp
+        ? logMetricChips(cmp)
+        : logPendingCell(round && round.open
+            ? 'ยังไม่ได้วัดผลรอบนี้'
+            : 'ยังไม่มีตัวเลขให้เทียบ')),
+
+    el('td', { class: 'lc-why' }, rec.reason
+      ? el('div', { class: 'log-wrap-text' }, rec.reason)
+      : el('span', { class: 'log-pending' }, '—')),
+
+    el('td', { class: 'lc-exp' }, rec.expected
+      ? el('div', { class: 'log-wrap-text' }, rec.expected)
+      : el('span', { class: 'log-pending' }, '—')));
+
+  return tr;
+}
+
+/** แถวของกลุ่มการปรับที่ดึงมาจาก Google Ads */
+function logAdsTr(row) {
+  const span = groupTimeSpan(row.items);
+  const tr = el('tr', {
+    class: 'log-row is-ads' + (Log.open.has(row.id) ? ' is-open' : ''),
+    tabindex: '0',
+    title: 'กดเพื่อกางดูรายการทั้งหมดในกลุ่มนี้',
+    onclick: () => logToggle(row.id),
+    onkeydown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); logToggle(row.id); } }
+  });
+
+  tr.append(
+    el('td', { class: 'lc-date' },
+      el('div', { class: 'cell-strong' }, thaiDate(row.date)),
+      el('div', { class: 'cell-sub' }, span || relativeDay(row.date))),
+
+    el('td', { class: 'lc-camp' },
+      el('div', { class: 'cell-strong' }, row.campaign),
+      el('div', { class: 'cell-sub' }, 'จาก Google Ads')),
+
+    el('td', { class: 'lc-what' },
+      el('div', { class: 'log-tags' },
+        el('span', { class: 'tag tag-ads' }, row.label),
+        el('span', { class: 'tag' }, `${row.items.length} รายการ`)),
+      el('div', { class: 'log-detail-text' },
+        row.items.length === 1
+          ? String(row.items[0].detail || '')
+          : String(row.items[0].detail || '') + ` … และอีก ${row.items.length - 1} รายการ`)),
+
+    el('td', { class: 'lc-num' }, logPendingCell('—')),
+    el('td', { class: 'lc-why' }, el('span', { class: 'log-pending' }, 'ยังไม่ได้จดเหตุผล')),
+    el('td', { class: 'lc-exp' }, el('span', { class: 'log-pending' }, '—')));
+
+  return tr;
+}
+
+function logToggle(id) {
+  if (Log.open.has(id)) Log.open.delete(id); else Log.open.add(id);
+  renderLogPage();
+}
+
+/** แถวรายละเอียดที่กางออกมา */
+function logDetailTr(row) {
+  const box = el('div', { class: 'log-detail-box' });
+
+  if (row.src === 'rec') {
+    const rec = row.rec;
+    const cmp = recCompare(rec);
+    const round = roundOf(rec);
+
+    if (round && !round.orphan) {
+      box.append(el('div', { class: 'ldb-line' },
+        el('b', {}, roundLabel(round)),
+        round.adjustments.length > 1
+          ? ` · ผลรวมของการปรับ ${round.adjustments.length} ครั้งในรอบนี้` : ''));
+    }
+    if (rec.change_detail) {
+      box.append(el('div', { class: 'ldb-line' },
+        el('b', {}, 'สิ่งที่ปรับ: '), rec.change_detail));
+    }
+    if (rec.result_note) {
+      box.append(el('div', { class: 'ldb-line' },
+        el('b', {}, 'ผลจริง: '), rec.result_note));
+    }
+    if (cmp && round && round.from && round.to) {
+      const b = block(round.from, 'before'), a = block(round.to, 'before');
+      const sum = verdictSummary(cmp, b, a);
+      if (sum) box.append(sum);
+      box.append(deltaTable(cmp));
+      const conf = confidenceNote(b, a);
+      if (conf) box.append(conf);
+    } else {
+      box.append(el('p', { class: 'card-note' },
+        'ยังไม่มีตัวเลขสองจุดให้เทียบ — ใส่ตัวเลขวัดผลของแคมเปญนี้แล้วผลจะขึ้นเอง'));
+    }
+
+    const actions = el('div', { class: 'ldb-actions' },
+      el('button', {
+        class: 'btn btn-sm', type: 'button',
+        onclick: e => { e.stopPropagation(); Form.load(rec); focusForm(); }
+      }, '✎ แก้ไขบันทึกนี้'));
+    if (isMeasured(rec)) {
+      actions.append(el('button', {
+        class: 'btn btn-sm', type: 'button',
+        onclick: e => { e.stopPropagation(); openRecordNumbers(rec); }
+      }, '📊 ดูตัวเลขเต็ม'));
+    }
+    if (round && round.open) {
+      actions.append(el('button', {
+        class: 'btn btn-sm btn-primary', type: 'button',
+        onclick: e => { e.stopPropagation(); Measure.open(rec.campaign); }
+      }, '＋ ใส่ตัวเลขวัดผล'));
+    }
+    box.append(actions);
+
+  } else {
+    const list = el('div', { class: 'ldb-changes' });
+    for (const c of row.items.slice(0, 120)) {
+      list.append(el('div', { class: 'chg-row' },
+        el('span', { class: 'chg-time' }, timeOfChange(c)),
+        el('div', { class: 'chg-body' },
+          el('div', { class: 'chg-detail' }, String(c.detail || '')),
+          el('div', { class: 'chg-meta' },
+            c.ad_group ? el('span', {}, 'กลุ่ม: ' + c.ad_group) : null,
+            c.changed_by ? el('span', {}, 'โดย ' + c.changed_by) : null,
+            c.client ? el('span', {}, c.client) : null))));
+    }
+    if (row.items.length > 120) {
+      list.append(el('p', { class: 'card-note' },
+        `แสดง 120 รายการแรกจาก ${row.items.length}`));
+    }
+    box.append(list);
+    box.append(el('div', { class: 'ldb-actions' },
+      el('button', {
+        class: 'btn btn-sm btn-primary', type: 'button',
+        onclick: e => { e.stopPropagation(); logDraftFromAds(row); }
+      }, 'จดเป็นบันทึก + ใส่เหตุผล')));
+  }
+
+  return el('tr', { class: 'log-detail-row' }, el('td', { colspan: '6' }, box));
+}
+
+/** เอากลุ่มการปรับจาก Google Ads ไปเปิดเป็นร่างบันทึกใหม่ */
+function logDraftFromAds(row) {
+  const head = row.items.length === 1
+    ? String(row.items[0].detail || '')
+    : `${row.label} ${row.items.length} รายการ — ` +
+      row.items.slice(0, 3).map(c => String(c.detail || '')).join(' · ') +
+      (row.items.length > 3 ? ` และอีก ${row.items.length - 3} รายการ` : '');
+
+  Form.draft({
+    date: row.date,
+    campaign: row.campaign,
+    tag: CHANGE_CAT_TO_TAG[row.cat] || 'อื่น ๆ',
+    detail: head,
+    key: ''
+  });
+  $('#f_change_detail').value = head;
+  focusForm();
+  toast('เติมรายละเอียดจาก Google Ads ให้แล้ว — เหลือใส่เหตุผลกับผลที่คาดหวัง', 4200);
+}
+
+/* ── มุมมอง "สรุปรายแคมเปญ" ─────────────────────────────── */
+
+/**
+ * 1 แถว = 1 แคมเปญในหนึ่งช่วงเวลา
+ * ตัวเลขเทียบ "ช่วงนี้ vs ช่วงก่อนหน้าที่ยาวเท่ากัน" จากชีต METRICS
+ * ไม่ใช่รอบวัดผล — เพราะคำถามของมุมมองนี้คือ "เดือนนี้เทียบเดือนที่แล้วเป็นยังไง"
+ */
+function logRollupData() {
+  const rows = logAllRows();
+  const byKey = new Map();
+
+  for (const r of rows) {
+    const pk = logPeriodKey(r.date, Log.period);
+    const key = `${pk}|${r.campaign}`;
+    if (!byKey.has(key)) {
+      byKey.set(key, { key, period: pk, campaign: r.campaign, items: [], tags: new Map() });
+    }
+    const g = byKey.get(key);
+    g.items.push(r);
+    const labels = r.src === 'rec'
+      ? String(r.rec.tags || '').split(',').map(t => t.trim()).filter(Boolean)
+      : [r.label];
+    for (const t of (labels.length ? labels : ['ไม่ระบุประเภท'])) {
+      g.tags.set(t, (g.tags.get(t) || 0) + (r.src === 'ads' ? r.items.length : 1));
+    }
+  }
+
+  const out = [...byKey.values()];
+  for (const g of out) {
+    g.recCount = g.items.filter(r => r.src === 'rec').length;
+    g.adsCount = g.items.reduce((n, r) => n + (r.src === 'ads' ? r.items.length : 0), 0);
+    const range = logPeriodRange(g.period, Log.period);
+    const upTo = adsDataUpTo();
+    const to = upTo && upTo < range.to ? upTo : range.to;
+    const prev = logPrevRange(range);
+    const cur = hasAdsData() ? sumAdsRange(g.campaign, range.from, to) : null;
+    const before = hasAdsData() ? sumAdsRange(g.campaign, prev.from, prev.to) : null;
+    g.range = range;
+    g.cmp = (cur && before)
+      ? compareBlocks({ ...before, _days: before.days }, { ...cur, _days: cur.days }, 'auto')
+      : null;
+    g.cur = cur;
+    g.prevRange = prev;
+  }
+
+  return out.sort((a, b) =>
+    b.period.localeCompare(a.period) || b.items.length - a.items.length);
+}
+
+function renderLogRollup() {
+  const host = $('#logBody');
+  host.innerHTML = '';
+  const all = logRollupData();
+
+  $('#logCount').textContent = all.length
+    ? `${all.length} แถว — ${new Set(all.map(g => g.campaign)).size} แคมเปญ` +
+      ' · ตัวเลขเทียบกับช่วงก่อนหน้าที่ยาวเท่ากัน'
+    : '';
+
+  if (!all.length) {
+    host.append(el('div', { class: 'empty' },
+      el('strong', {}, 'ยังไม่มีการปรับในช่วงนี้'),
+      'ลองขยายช่วงเวลา หรือล้างตัวกรองดู'));
+    return;
+  }
+
+  const rows = all.slice(0, Log.limit);
+  const table = el('table', { class: 'data log-table log-rollup' });
+  table.append(el('thead', {}, el('tr', {},
+    el('th', { class: 'lc-date' }, 'ช่วงเวลา'),
+    el('th', { class: 'lc-camp' }, 'แคมเปญ'),
+    el('th', { class: 'lc-what' }, 'ปรับอะไรไปบ้าง'),
+    el('th', { class: 'lc-num' }, 'ตัวเลขช่วงนี้ เทียบช่วงก่อน'))));
+
+  const tb = el('tbody');
+  let lastPeriod = null;
+
+  for (const g of rows) {
+    if (g.period !== lastPeriod) {
+      lastPeriod = g.period;
+      const inPeriod = all.filter(x => x.period === g.period);
+      const times = inPeriod.reduce((n, x) => n + x.recCount + x.adsCount, 0);
+      tb.append(el('tr', { class: 'log-period' },
+        el('td', { colspan: '4' },
+          el('span', { class: 'lp-title' }, logPeriodLabel(g.period, Log.period)),
+          el('span', { class: 'lp-meta' },
+            `${times} รายการ · ${inPeriod.length} แคมเปญ`))));
+    }
+
+    const topTags = [...g.tags.entries()].sort((a, b) => b[1] - a[1]);
+    const tr = el('tr', {
+      class: 'log-row' + (Log.open.has(g.key) ? ' is-open' : ''),
+      tabindex: '0',
+      title: 'กดเพื่อกางดูว่าปรับอะไรไปบ้างในช่วงนี้',
+      onclick: () => logToggle(g.key),
+      onkeydown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); logToggle(g.key); } }
+    },
+      el('td', { class: 'lc-date' },
+        el('div', { class: 'cell-strong' }, thaiDate(g.range.from)),
+        el('div', { class: 'cell-sub' }, 'ถึง ' + thaiDate(g.range.to))),
+      el('td', { class: 'lc-camp' },
+        el('div', { class: 'cell-strong' }, g.campaign),
+        el('div', { class: 'cell-sub' },
+          `จดเอง ${g.recCount} ครั้ง` + (g.adsCount ? ` · Ads ${g.adsCount} รายการ` : ''))),
+      el('td', { class: 'lc-what' },
+        el('div', { class: 'log-tags' },
+          topTags.slice(0, 4).map(([t, n]) =>
+            el('span', { class: 'tag' }, n > 1 ? `${t} ${n}` : t)),
+          topTags.length > 4 ? el('span', { class: 'tag' }, `+${topTags.length - 4}`) : null)),
+      el('td', { class: 'lc-num' },
+        g.cmp
+          ? logMetricChips(g.cmp)
+          : logPendingCell(hasAdsData()
+              ? 'ไม่มีตัวเลขของช่วงนี้ในชีต'
+              : 'ต้องเปิดระบบดึงตัวเลขรายวันก่อน')));
+    tb.append(tr);
+
+    if (Log.open.has(g.key)) {
+      const box = el('div', { class: 'log-detail-box' });
+      box.append(el('div', { class: 'ldb-line' },
+        el('b', {}, 'เทียบกับ '),
+        `${thaiDate(g.prevRange.from)} – ${thaiDate(g.prevRange.to)}` +
+        (g.cur ? ` · ช่วงนี้มีข้อมูล ${g.cur.days} วัน` : '')));
+      if (g.cmp) box.append(deltaTable(g.cmp));
+
+      const list = el('div', { class: 'ldb-changes' });
+      for (const r of g.items) {
+        list.append(el('div', { class: 'chg-row' },
+          el('span', { class: 'chg-time' }, thaiDate(r.date)),
+          el('div', { class: 'chg-body' },
+            el('div', { class: 'chg-detail' },
+              r.src === 'rec'
+                ? String(r.rec.change_detail || '—')
+                : `${r.label} ${r.items.length} รายการ`),
+            r.src === 'rec' && r.rec.reason
+              ? el('div', { class: 'chg-meta' }, el('span', {}, 'เหตุผล: ' + r.rec.reason))
+              : null)));
+      }
+      box.append(list);
+      tb.append(el('tr', { class: 'log-detail-row' }, el('td', { colspan: '4' }, box)));
+    }
+  }
+
+  table.append(tb);
+  host.append(el('div', { class: 'table-wrap log-wrap' }, table));
+
+  if (all.length > rows.length) {
+    host.append(el('div', { class: 'timeline-more' },
+      el('button', {
+        class: 'btn btn-sm', type: 'button',
+        onclick: () => { Log.limit += 150; renderLogPage(); }
+      }, `แสดงเพิ่ม (เหลืออีก ${all.length - rows.length} แถว)`)));
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────
    หน้าจอกรอกรหัสผ่าน
    ───────────────────────────────────────────────────────────── */
 
@@ -7419,6 +8174,7 @@ function refreshAll() {
   if (!$('#panel-budget').hidden) renderBudgetPage();
   if (!$('#panel-leads').hidden) renderLeadPage();
   if (FEATURES.changes && !$('#panel-changes').hidden) renderChangePage();
+  if (!$('#panel-log').hidden) renderLogPage();
 }
 
 /** ลูกศรขึ้น/ลงเลื่อนเมนูซ้าย — พฤติกรรมมาตรฐานของ role="tablist" */
@@ -7513,6 +8269,7 @@ async function boot() {
   initDailyCard();
   if (FEATURES.ads) initSpendPage();
   if (FEATURES.changes) initChangePage();
+  initLogPage();
   if (FEATURES.ga4) initLeadPage();
   initBudgetPage();
   initSidebar();
