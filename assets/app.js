@@ -8,7 +8,7 @@
    1. ค่าคงที่
    ───────────────────────────────────────────────────────────── */
 
-const APP_VERSION = '1.26.0';
+const APP_VERSION = '1.27.0';
 const LS_CONFIG = 'aar.config.v1';
 
 /* ═══════════════════════════════════════════════════════════════
@@ -7477,9 +7477,12 @@ function calCollect() {
     const it = slot(campaign, date, cat, tags[0] || CHANGE_CAT_LABEL[cat] || 'อื่น ๆ');
     it.recs.push(r);
     it.count++;
-    // จดเองแปลว่าตั้งใจ — วัดผลเสมอ ไม่ว่าประเภทไหน
-    it.measured = true;
-    it.byHand = true;
+    // AutoLog สร้างบันทึกให้เองทุกอย่าง รวม negative กับเปิด/ปิด — พวกนั้นไม่ใช่ "คนจด"
+    // นับว่าคนตั้งใจจดก็ต่อเมื่อสร้างจากฟอร์มเอง (ไม่มี auto_key) หรือมีคนใส่เหตุผลลงไปแล้ว
+    const byHand = !String(r.auto_key || '').trim()
+      || !!String(r.reason || '').trim()
+      || !!String(r.expected || '').trim();
+    if (byHand) { it.measured = true; it.byHand = true; }
   }
 
   if (FEATURES.changes) {
@@ -7790,9 +7793,9 @@ function renderLogPage() {
              (key === Cal.day ? ' is-sel' : ''),
       tabindex: '0', role: 'button',
       'aria-label': `${thaiDate(key)} — ${cell.points.length} จุดวัดผล`,
-      onclick: () => { Cal.day = Cal.day === key ? null : key; renderLogPage(); },
+      onclick: () => calPick(key),
       onkeydown: e => {
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); Cal.day = Cal.day === key ? null : key; renderLogPage(); }
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); calPick(key); }
       }
     },
       el('div', { class: 'cal-num' },
@@ -7820,6 +7823,18 @@ function renderLogPage() {
 
   renderCalLegend();
   renderCalPanel(y, m, items);
+}
+
+/** เลือกวัน แล้วเลื่อนลงไปให้เห็นรายละเอียดเลย — รายละเอียดอยู่ใต้ปฏิทิน */
+function calPick(key) {
+  const same = Cal.day === key;
+  Cal.day = same ? null : key;
+  renderLogPage();
+  if (!same) {
+    requestAnimationFrame(() => {
+      $('#calDetail')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }
 }
 
 function renderCalLegend() {
@@ -7856,8 +7871,11 @@ function renderCalPanel(y, m, items) {
         minor.length
           ? `มีแต่ ${[...new Set(minor.map(i => i.label))].join(' · ')} ซึ่งไม่ได้ตั้งให้วัดผล`
           : 'ลองกดวันอื่นในปฏิทิน'));
+    } else {
+      const cards = el('div', { class: 'cd-cards' });
+      for (const it of points) cards.append(calCard(calMeasure(it)));
+      body.append(cards);
     }
-    for (const it of points) body.append(calCard(calMeasure(it)));
     if (minor.length) body.append(calMinorBox(minor));
     return;
   }
@@ -7886,16 +7904,23 @@ function renderCalPanel(y, m, items) {
 
   if (!noReason.length) {
     body.append(el('div', { class: 'empty' }, el('strong', {}, 'ใส่เหตุผลครบแล้ว'), 'ทุกจุดวัดผลของเดือนนี้มีเหตุผลกำกับหมด'));
-  }
-  for (const r of noReason.slice(0, 30)) {
-    const v = CAL_VERDICT[r.verdict] || CAL_VERDICT.nodata;
-    body.append(el('div', {
-      class: `cal-mini ${v.cls}`, tabindex: '0', role: 'button',
-      onclick: () => { Cal.day = r.item.date; renderLogPage(); },
-      onkeydown: e => { if (e.key === 'Enter') { Cal.day = r.item.date; renderLogPage(); } }
-    },
-      el('div', { class: 'cm-name' }, r.item.campaign),
-      el('div', { class: 'cm-meta' }, `${thaiDate(r.item.date)} · ${r.item.label} · ${v.label}`)));
+  } else {
+    const list = el('div', { class: 'cal-minis' });
+    for (const r of noReason.slice(0, 48)) {
+      const v = CAL_VERDICT[r.verdict] || CAL_VERDICT.nodata;
+      list.append(el('div', {
+        class: `cal-mini ${v.cls}`, tabindex: '0', role: 'button',
+        onclick: () => calPick(r.item.date),
+        onkeydown: e => { if (e.key === 'Enter') calPick(r.item.date); }
+      },
+        el('div', { class: 'cm-name' }, r.item.campaign),
+        el('div', { class: 'cm-meta' }, `${thaiDate(r.item.date)} · ${r.item.label} · ${v.label}`)));
+    }
+    body.append(list);
+    if (noReason.length > 48) {
+      body.append(el('p', { class: 'card-note', style: 'margin-top:10px' },
+        `แสดง 48 รายการแรกจาก ${noReason.length}`));
+    }
   }
 }
 

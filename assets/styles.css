@@ -1961,13 +1961,11 @@ td.num .cell-sub { display: block; margin-top: 2px; line-height: 1.4; }
 .cal-tools .field.w-sm{ width:148px }
 .cal-tools .field.w-md{ width:230px }
 
-.cal-layout{ display:grid; grid-template-columns:minmax(0,1fr) 372px; gap:18px; align-items:start }
-@media (max-width:1150px){ .cal-layout{ grid-template-columns:minmax(0,1fr) } }
-
 /* ── ตารางเดือน ── */
 .cal-grid-wrap{ border:1px solid var(--border); border-radius:var(--r-md); overflow:hidden; background:var(--surface-1) }
 .cal-dow{ display:grid; grid-template-columns:repeat(7,1fr); background:var(--surface-2); border-bottom:1px solid var(--border) }
-.cal-dow span{ padding:8px 10px; font-size:0.7rem; font-weight:500; color:var(--text-muted); letter-spacing:0.07em }
+.cal-dow span{ padding:8px 10px; font-size:0.7rem; font-weight:500; color:var(--text-muted);
+  letter-spacing:0.07em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
 .cal-grid{ display:grid; grid-template-columns:repeat(7,1fr) }
 
 .cal-cell{
@@ -2013,20 +2011,24 @@ td.num .cell-sub { display: block; margin-top: 2px; line-height: 1.4; }
 .cl-dot{ width:11px; height:11px; border-radius:3px; border-left-width:3px; border-left-style:solid; border-top:1px solid var(--border); border-right:1px solid var(--border); border-bottom:1px solid var(--border) }
 .cl-end{ margin-left:auto }
 
-/* ── แผงขวา ── */
-.cal-panel{
-  border:1px solid var(--border); border-radius:var(--r-md);
-  background:var(--surface-1); overflow:hidden; position:sticky; top:16px;
+/* ── กล่องรายละเอียด (อยู่ใต้ปฏิทิน) ── */
+.cal-detail{
+  margin-top:18px; border:1px solid var(--border); border-radius:var(--r-md);
+  background:var(--surface-1); overflow:hidden; scroll-margin-top:14px;
 }
-.cp-head{ padding:13px 15px; border-bottom:1px solid var(--border); background:var(--surface-2) }
+.cd-head{ padding:14px 18px; border-bottom:1px solid var(--border); background:var(--surface-2) }
 .cph-row{ display:flex; align-items:center; gap:10px }
-.cp-head h3{ margin:0; font-size:0.98rem; font-weight:500 }
+.cd-head h3{ margin:0; font-size:1.02rem; font-weight:500 }
 .cph-row .btn{ margin-left:auto }
-.cp-head p{ margin:2px 0 0; font-size:0.77rem; color:var(--text-muted); font-weight:300 }
-.cp-body{ padding:14px; max-height:min(70vh,720px); overflow-y:auto }
-.cp-sub{ font-size:0.82rem; font-weight:500; margin:16px 0 9px }
+.cd-head p{ margin:2px 0 0; font-size:0.79rem; color:var(--text-muted); font-weight:300 }
+.cd-body{ padding:18px }
 
-.cal-stats{ display:grid; grid-template-columns:repeat(2,1fr); gap:8px }
+/* การ์ดเรียงเป็นคอลัมน์ตามความกว้างจอ */
+.cd-cards{ display:grid; grid-template-columns:repeat(auto-fill,minmax(360px,1fr)); gap:14px;
+  align-items:start; justify-content:start }
+.cp-sub{ font-size:0.86rem; font-weight:500; margin:20px 0 10px }
+
+.cal-stats{ display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px }
 .cs-box{ border:1px solid var(--border); border-radius:11px; padding:9px 12px; background:var(--surface-2) }
 .cs-box .k{ display:block; font-size:0.7rem; color:var(--text-muted); font-weight:300 }
 .cs-box .v{ display:block; font-size:1.1rem; font-weight:600; margin-top:1px }
@@ -2034,8 +2036,9 @@ td.num .cell-sub { display: block; margin-top: 2px; line-height: 1.4; }
 .cs-bad .v{ color:var(--critical-text) }
 .cs-warn .v{ color:var(--warning-text) }
 
+.cal-minis{ display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:8px }
 .cal-mini{ border:1px solid var(--border); border-left-width:3px; border-radius:10px;
-  padding:9px 11px; margin-bottom:7px; cursor:pointer; transition:0.12s var(--ease) }
+  padding:9px 11px; cursor:pointer; transition:0.12s var(--ease) }
 .cal-mini:hover{ border-color:var(--accent-solid); background:var(--accent-soft) }
 .cal-mini:focus-visible{ outline:2px solid var(--accent-solid); outline-offset:1px }
 .cm-name{ font-size:0.83rem; font-weight:500; word-break:break-word }
@@ -2043,7 +2046,7 @@ td.num .cell-sub { display: block; margin-top: 2px; line-height: 1.4; }
 
 /* ── การ์ดจุดวัดผล ── */
 .cal-card{ border:1px solid var(--border); border-left-width:3px; border-radius:12px;
-  padding:13px; margin-bottom:11px; background:var(--surface-1) }
+  padding:14px; background:var(--surface-1) }
 .cal-card.v-good{ border-left-color:var(--good) }
 .cal-card.v-bad{ border-left-color:var(--critical) }
 .cal-card.v-flat{ border-left-color:var(--border-strong) }
@@ -2134,6 +2137,6 @@ td.num .cell-sub { display: block; margin-top: 2px; line-height: 1.4; }
   .cal-tools .field.w-md{ width:100% }
   .cal-nav{ width:100% }
   .cal-month{ flex:1 1 auto; min-width:0 }
-  .cal-panel{ position:static }
-  .cp-body{ max-height:none }
+  .cd-body{ padding:14px }
+  .cd-cards{ grid-template-columns:1fr }
 }
