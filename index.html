@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="assets/styles.css?v=1.26.0">
+<link rel="stylesheet" href="assets/styles.css?v=1.27.0">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%232a78d6'/><path d='M8 22 L13 14 L18 18 L24 9' stroke='white' stroke-width='2.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
 </head>
 <body>
@@ -568,20 +568,16 @@
 
   <div id="calWarn"></div>
 
-  <div class="cal-layout">
-    <div>
-      <div class="cal-grid-wrap">
-        <div class="cal-dow"><span>อา</span><span>จ</span><span>อ</span><span>พ</span><span>พฤ</span><span>ศ</span><span>ส</span></div>
-        <div class="cal-grid" id="calGrid"></div>
-      </div>
-      <div class="cal-legend" id="calLegend"></div>
-    </div>
-
-    <aside class="cal-panel">
-      <div class="cp-head" id="calPanelHead"></div>
-      <div class="cp-body" id="calPanelBody"></div>
-    </aside>
+  <div class="cal-grid-wrap">
+    <div class="cal-dow"><span>อาทิตย์</span><span>จันทร์</span><span>อังคาร</span><span>พุธ</span><span>พฤหัส</span><span>ศุกร์</span><span>เสาร์</span></div>
+    <div class="cal-grid" id="calGrid"></div>
   </div>
+  <div class="cal-legend" id="calLegend"></div>
+
+  <section class="cal-detail" id="calDetail">
+    <div class="cd-head" id="calPanelHead"></div>
+    <div class="cd-body" id="calPanelBody"></div>
+  </section>
 </section>
 
 <section class="panel" id="panel-budget" role="tabpanel" aria-labelledby="tab-budget" hidden>
@@ -962,6 +958,6 @@
   </div>
 </dialog>
 
-<script src="assets/app.js?v=1.26.0"></script>
+<script src="assets/app.js?v=1.27.0"></script>
 </body>
 </html>
