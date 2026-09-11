@@ -8,7 +8,7 @@
    1. ค่าคงที่
    ───────────────────────────────────────────────────────────── */
 
-const APP_VERSION = '1.25.0';
+const APP_VERSION = '1.26.0';
 const LS_CONFIG = 'aar.config.v1';
 
 /* ═══════════════════════════════════════════════════════════════
@@ -1252,7 +1252,7 @@ function showTab(name) {
   if (name === 'leads') renderLeadPage();
   if (name === 'changes') renderChangePage();
   if (name === 'log') renderLogPage();
-  if (name === 'data') { renderFeatureToggles(); renderTaxonomyEditor(); renderConnStatusBox(); }
+  if (name === 'data') { renderFeatureToggles(); renderMeasureCats(); renderTaxonomyEditor(); renderConnStatusBox(); }
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -6727,6 +6727,39 @@ function renderFeatureToggles() {
     'กดแล้วหน้าเว็บจะโหลดใหม่หนึ่งครั้ง'));
 }
 
+/** กล่องตั้งค่า "จุดวัดผล" ในหน้าตั้งค่า */
+function renderMeasureCats() {
+  const host = $('#measureCatList');
+  if (!host) return;
+  host.innerHTML = '';
+  const cats = measureCats();
+  const on = CHANGE_CATEGORIES.filter(([k]) => cats[k]);
+  const off = CHANGE_CATEGORIES.filter(([k]) => !cats[k]);
+
+  const col = (title, list, isOn) => {
+    const box = el('div', { class: 'mc-col' }, el('h4', {}, title));
+    if (!list.length) box.append(el('p', { class: 'card-note' }, '— ไม่มี —'));
+    for (const [key, label] of list) {
+      box.append(el('label', { class: 'mc-opt' + (isOn ? ' is-on' : '') },
+        el('input', {
+          type: 'checkbox', checked: isOn,
+          onchange: e => { setMeasureCat(key, e.target.checked); _calCache = null; renderMeasureCats(); refreshAll(); }
+        }),
+        el('span', {}, label)));
+    }
+    return box;
+  };
+
+  host.append(el('div', { class: 'mc-grid' },
+    col(`นับเป็นจุดวัดผล (${on.length})`, on, true),
+    col(`ไม่นับ — แค่บอกว่าเกิดขึ้น (${off.length})`, off, false)));
+
+  host.append(el('p', { class: 'card-note', style: 'margin-top:14px' },
+    'ยิ่งนับน้อย ช่วงก่อน-หลังยิ่งสะอาด วัดผลได้แม่นกว่า · ' +
+    'การปรับที่จดเองในหน้า "บันทึกใหม่" จะวัดผลเสมอ ไม่ว่าประเภทไหน · ' +
+    'ค่านี้จำไว้ในเบราว์เซอร์เครื่องนี้เท่านั้น'));
+}
+
 function renderTaxonomyEditor() {
   $('#taxonomyText').value = Taxonomy.toText();
   renderCampaignAdder();
@@ -6899,8 +6932,7 @@ function fillSelect(sel, values, allLabel) {
 /** เติม dropdown หมวดหมู่ทุกหน้า แบบไล่ลำดับ กลุ่ม → สินค้า → ช่องทาง → แคมเปญ */
 function syncCampaignSelects() {
   const sets = [
-    { group: '#flt_group', product: '#flt_product', campaign: '#flt_campaign', all: 'ทั้งหมด' },
-    { group: '#log_group', product: '#log_product', campaign: '#log_campaign', all: 'ทั้งหมด' }
+    { group: '#flt_group', product: '#flt_product', campaign: '#flt_campaign', all: 'ทั้งหมด' }
   ];
 
   const campaignsOf = (group, product) => Store.campaigns.filter(c => {
@@ -7322,833 +7354,760 @@ function updateChangeBadge() {
 }
 
 /* ─────────────────────────────────────────────────────────────
-   13b. หน้า "ตารางการปรับ"
+   13b. หน้า "ปฏิทินวัดผล"
 
-   ปัญหาที่หน้านี้ต้องแก้
-     ทีมแตะ Google Ads วันละ 20-30 ครั้งกระจายอยู่ 20 แคมเปญ
-     การพยายามวัดผล "ทีละการปรับ" วัดไม่ได้จริง — ปรับหลายอย่างในแคมเปญเดียว
-     วันเดียวกัน แยกไม่ออกว่าอันไหนทำให้ตัวเลขขยับ
+   หน้านี้ตอบคำถามเดียว: เดือนนี้ปรับอะไรไปบ้าง แล้วอันไหนได้ผล
 
-   หน่วยที่ใช้จริงจึงเป็น "แคมเปญ × วัน"
-     ทุกอย่างที่แตะแคมเปญหนึ่งในวันหนึ่ง = หนึ่งแถว
-     ตัวเลขของแถว = ช่วงก่อนวันนั้น เทียบ ช่วงตั้งแต่วันนั้นเป็นต้นไป
-     สองช่วงยาวเท่ากันเสมอ จึงไม่ต้องหารเป็นค่าต่อวันให้สับสน
+   ทำไมเป็นปฏิทิน
+     ทีมแตะ Google Ads วันละ 20-30 ครั้ง ถ้าเรียงเป็นตารางยาวจะไล่อ่านไม่ไหว
+     ปฏิทินกวาดตาทีเดียวเห็นทั้งเดือน สีของแต่ละรายการคือผลที่วัดได้
 
-   เลือกช่วงเทียบเองได้
-     กางแถวออกมาจะเห็นตัวเลขรายวันของแคมเปญนั้นเรียงลงมา
-     วันไหนมีการปรับจะมีธงปักไว้ — กดวันไหนก็ได้เพื่อย้ายขอบของช่วงเทียบ
-     ถ้าในช่วงที่เทียบมีการปรับอื่นปนอยู่ ระบบเตือนให้เห็นตรง ๆ ไม่กลบ
+   หน่วยของการวัด = "จุดวัดผล"
+     ไม่ใช่ทุกการปรับ — เฉพาะประเภทที่มีน้ำหนักจริง (bid · งบ · headline · keyword …)
+     negative keyword กับ เปิด/ปิด ไม่นับ เพราะถ้านับหมดจะไม่มีช่วงไหนสะอาดพอวัดได้เลย
+     แต่ยังโชว์ไว้เป็นบรรทัดเทา ๆ เพราะมันกระทบตัวเลขจริง
+
+   วิธีวัด 5 ชั้นซ้อนกัน
+     1. เทียบก่อน-หลัง ช่วงยาวเท่ากัน
+     2. หักภาพรวมออกด้วยแคมเปญที่ไม่ได้ปรับในช่วงเดียวกัน (control group)
+     3. เทียบกับความแกว่งปกติของแคมเปญเอง
+     5. เว้นช่วง learning phase ของ Google หลังเปลี่ยนกลยุทธ์ bid
+     6. หน้าต่างเป็นทวีคูณของ 7 วันเสมอ กันเสาร์-อาทิตย์ทำตัวเลขเพี้ยน
    ───────────────────────────────────────────────────────────── */
 
-const LOG_PRESETS = [
-  { id: '30',  label: '30 วัน',   from: () => isoOffset(-29),  to: () => todayISO() },
-  { id: '90',  label: '90 วัน',   from: () => isoOffset(-89),  to: () => todayISO() },
-  { id: '180', label: '6 เดือน',  from: () => isoOffset(-179), to: () => todayISO() },
-  { id: 'all', label: 'ทั้งหมด',  from: () => '',              to: () => '' }
-];
-
-const Log = {
-  win: 7,              // หน้าต่างเทียบตั้งต้น (วัน)
-  sort: 'recent',      // recent | most | worst
-  preset: '90',
-  open: new Set(),     // แถวที่กางอยู่
-  ranges: new Map(),   // rowId → { bFrom, aTo } ช่วงที่ผู้ใช้เลือกเอง
-  openCamps: null,     // แคมเปญที่พับ/กางอยู่ (null = ยังไม่เคยแตะ = กางหมด)
-  campLimit: 8,
-  dayLimit: new Map()  // campaign → แสดงกี่วัน
-};
+/** หน้าต่างเทียบผล — ทวีคูณของ 7 เสมอ (วิธีที่ 6) */
+const CAL_WINDOWS = [7, 14, 28];
 
 /** มีข้อมูลหลังวันที่ปรับอย่างน้อยกี่วันถึงจะยอมตัดสิน */
-const LOG_MIN_AFTER_DAYS = 3;
+const CAL_MIN_AFTER = 3;
 
-/** ตัวชี้วัดที่โชว์ในตาราง — 4 ตัวที่ใช้ตัดสินจริง */
-const LOG_KEY_METRICS = ['cpa', 'conversions', 'ctr', 'cpc'];
+/** Google ใช้เวลาเรียนรู้หลังเปลี่ยนกลยุทธ์ bid — เว้นไว้ก่อนค่อยนับ (วิธีที่ 5) */
+const CAL_LEARN_DAYS = 7;
+const CAL_LEARN_CATS = ['bid_strategy'];
 
-/** หมวดของ CHANGES → แท็กที่ฟอร์มบันทึกรู้จัก (ใช้ตอนกด "ใส่เหตุผล") */
-const CHANGE_CAT_TO_TAG = {
-  budget: 'ปรับงบประมาณ',
-  bid: 'ปรับ Bid / Max CPC',
-  bid_strategy: 'เปลี่ยน Bid Strategy',
-  bid_modifier: 'ปรับ Bid / Max CPC',
-  keyword: 'เพิ่ม Keywords',
-  negative: 'เพิ่ม Negative Keywords',
-  ad: 'แก้ Headline / Description',
-  ad_status: 'เพิ่ม/ลบ Ad',
-  asset: 'อื่น ๆ',
-  targeting: 'ปรับ Audience',
-  campaign_status: 'เปิด/ปิดแคมเปญ',
-  campaign_other: 'อื่น ๆ',
-  adgroup_status: 'ปรับ Ad Group',
-  adgroup_other: 'ปรับ Ad Group',
-  other: 'อื่น ๆ'
+/** ต้องมีแคมเปญเทียบอย่างน้อยกี่ตัวถึงจะเชื่อภาพรวมได้ (วิธีที่ 2) */
+const CAL_MIN_CONTROL = 2;
+
+/** ประเภทที่นับเป็นจุดวัดผล — เปลี่ยนได้ที่หน้าตั้งค่า */
+const LS_CAL_CATS = 'aar.measurecats.v1';
+const CAL_DEFAULT_CATS = {
+  bid: true, bid_strategy: true, bid_modifier: true, budget: true,
+  ad: true, keyword: true, targeting: true,
+  negative: false, ad_status: false, campaign_status: false, adgroup_status: false,
+  asset: false, campaign_other: false, adgroup_other: false, other: false
+};
+
+function measureCats() {
+  try {
+    return { ...CAL_DEFAULT_CATS, ...JSON.parse(localStorage.getItem(LS_CAL_CATS) || '{}') };
+  } catch { return { ...CAL_DEFAULT_CATS }; }
+}
+function setMeasureCat(key, on) {
+  const next = { ...measureCats(), [key]: !!on };
+  try { localStorage.setItem(LS_CAL_CATS, JSON.stringify(next)); } catch { /* เต็มก็ช่างมัน */ }
+}
+
+/** แท็กในบันทึกที่จดเอง → หมวดของ CHANGES (ใช้ตัดสินว่านับเป็นจุดวัดผลไหม) */
+const TAG_TO_CAT = {
+  'ปรับ Bid / Max CPC': 'bid',
+  'เปลี่ยน Bid Strategy': 'bid_strategy',
+  'ปรับงบประมาณ': 'budget',
+  'แก้ Headline / Description': 'ad',
+  'เพิ่ม/ลบ Ad': 'ad_status',
+  'เพิ่ม Keywords': 'keyword',
+  'ลบ Keywords': 'keyword',
+  'ปรับ Match Type': 'keyword',
+  'เพิ่ม Negative Keywords': 'negative',
+  'ปรับ Audience': 'targeting',
+  'ปรับ Location / Schedule': 'targeting',
+  'ปรับ Landing Page': 'campaign_other',
+  'ปรับ Ad Group': 'adgroup_other',
+  'เปิด/ปิดแคมเปญ': 'campaign_status',
+  'อื่น ๆ': 'other'
+};
+
+const Cal = {
+  month: null,          // Date ของวันที่ 1 ของเดือนที่ดูอยู่
+  win: 7,
+  campaign: '',
+  day: null,            // วันที่เลือกอยู่ (ISO) — null = ดูสรุปทั้งเดือน
+  ranges: new Map(),    // id → { bFrom, aTo } ช่วงที่ผู้ใช้เลือกเอง
+  built: false
 };
 
 /* ── ตัวช่วยวันที่ ───────────────────────────────────────── */
 
-function logShift(iso, days) {
-  const d = new Date(String(iso) + 'T00:00:00Z');
-  if (isNaN(d)) return iso;
+function calShift(isoStr, days) {
+  const d = new Date(String(isoStr) + 'T00:00:00Z');
+  if (isNaN(d)) return isoStr;
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
 }
+const CAL_MONTH_TH = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน',
+  'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
 
-/* ── รวบรวมข้อมูล ───────────────────────────────────────── */
-
-function logFilters() {
-  return {
-    from: $('#log_from')?.value || '',
-    to: $('#log_to')?.value || '',
-    group: $('#log_group')?.value || '',
-    product: $('#log_product')?.value || '',
-    campaign: $('#log_campaign')?.value || '',
-    q: String($('#log_q')?.value || '').trim().toLowerCase()
-  };
-}
-
-function logCampaignMeta(name) {
-  const meta = Store.campaign(name);
-  const product = meta?.product || '';
-  return { product, group: product ? Taxonomy.groupOf(product) : '' };
-}
+/* ── รวบรวมการปรับ ──────────────────────────────────────── */
 
 /**
- * ทุกอย่างที่แตะแต่ละแคมเปญในแต่ละวัน — รวมทั้งที่จดเองและที่ดึงมาจาก Google Ads
- * คืน Map: campaign → Map: date → { recs, changes, tags }
+ * ทุกการปรับในระบบ แยกเป็น "จุดวัดผล" กับ "ไม่นับ"
+ * รวมทั้งบันทึกที่จดเองและที่ ChangeHistory ดึงมา — ยุบเป็น แคมเปญ+วัน+หมวด ละหนึ่งรายการ
  */
-function logTouchIndex() {
-  const f = logFilters();
-  const byCamp = new Map();
+function calCollect() {
+  const cats = measureCats();
+  const byKey = new Map();
 
-  const slot = (campaign, date) => {
-    if (!byCamp.has(campaign)) byCamp.set(campaign, new Map());
-    const days = byCamp.get(campaign);
-    if (!days.has(date)) days.set(date, { date, campaign, recs: [], changes: [], tags: new Map() });
-    return days.get(date);
-  };
-  const addTag = (cell, label, n) => cell.tags.set(label, (cell.tags.get(label) || 0) + n);
-
-  const passCampaign = name => {
-    if (f.campaign && name !== f.campaign) return false;
-    if (f.group || f.product) {
-      const m = logCampaignMeta(name);
-      if (f.product && m.product !== f.product) return false;
-      if (f.group && m.group !== f.group) return false;
+  const slot = (campaign, date, cat, label) => {
+    const key = `${date}|${campaign}|${cat}`;
+    if (!byKey.has(key)) {
+      byKey.set(key, {
+        id: key, date, campaign, cat, label,
+        recs: [], changes: [], count: 0,
+        measured: !!cats[cat]
+      });
     }
-    return true;
+    return byKey.get(key);
   };
 
-  // บันทึกที่จดในเว็บ (รวมที่ AutoLog สร้างให้)
   for (const r of Store.records) {
     if (!hasAdjustment(r)) continue;
-    const date = String(r.date || '');
-    const campaign = String(r.campaign || '').trim();
+    const date = String(r.date || ''), campaign = String(r.campaign || '').trim();
     if (!date || !campaign) continue;
-    if (f.from && date < f.from) continue;
-    if (f.to && date > f.to) continue;
-    if (!passCampaign(campaign)) continue;
-    if (f.q) {
-      const hay = [campaign, r.ad_group, r.tags, r.change_detail, r.reason, r.expected].join(' ').toLowerCase();
-      if (!hay.includes(f.q)) continue;
-    }
-    const cell = slot(campaign, date);
-    cell.recs.push(r);
     const tags = String(r.tags || '').split(',').map(t => t.trim()).filter(Boolean);
-    for (const t of (tags.length ? tags : ['ไม่ระบุประเภท'])) addTag(cell, t, 1);
+    const cat = TAG_TO_CAT[tags[0]] || 'other';
+    const it = slot(campaign, date, cat, tags[0] || CHANGE_CAT_LABEL[cat] || 'อื่น ๆ');
+    it.recs.push(r);
+    it.count++;
+    // จดเองแปลว่าตั้งใจ — วัดผลเสมอ ไม่ว่าประเภทไหน
+    it.measured = true;
+    it.byHand = true;
   }
 
-  // การปรับจาก Google Ads ที่ยังไม่ได้ถูกแปลงเป็นบันทึก
   if (FEATURES.changes) {
     for (const c of Store.changes) {
-      if (c.logged) continue;
-      const date = String(c.date || '');
-      const campaign = String(c.campaign || '').trim();
+      const date = String(c.date || ''), campaign = String(c.campaign || '').trim();
       if (!date || !campaign) continue;
-      if (f.from && date < f.from) continue;
-      if (f.to && date > f.to) continue;
-      if (!passCampaign(campaign)) continue;
-      if (f.q) {
-        const hay = `${c.detail || ''} ${campaign} ${c.ad_group || ''} ${c.tag || ''}`.toLowerCase();
-        if (!hay.includes(f.q)) continue;
-      }
-      const cell = slot(campaign, date);
-      cell.changes.push(c);
-      addTag(cell, CHANGE_CAT_LABEL[String(c.category || 'other')] || 'อื่น ๆ', 1);
+      if (c.logged) continue;                    // AutoLog แปลงเป็นบันทึกไปแล้ว
+      const cat = String(c.category || 'other');
+      const it = slot(campaign, date, cat, CHANGE_CAT_LABEL[cat] || 'อื่น ๆ');
+      it.changes.push(c);
+      it.count++;
     }
   }
 
-  return byCamp;
+  return [...byKey.values()];
 }
 
-/* ── การเทียบผล ─────────────────────────────────────────── */
+let _calCache = null, _calRev = -1, _calCatSig = '';
+function calItems() {
+  const sig = JSON.stringify(measureCats());
+  if (_calCache && _calRev === Store.rev && _calCatSig === sig) return _calCache;
+  _calCache = calCollect();
+  _calRev = Store.rev;
+  _calCatSig = sig;
+  return _calCache;
+}
+
+/* ── เครื่องวัดผล ───────────────────────────────────────── */
+
+/** วันที่การปรับอื่นเกิดขึ้นกับแคมเปญนี้ (เฉพาะที่นับเป็นจุดวัดผล) */
+function calOtherPoints(campaign, exceptId) {
+  return calItems()
+    .filter(i => i.measured && i.campaign === campaign && i.id !== exceptId)
+    .map(i => i.date);
+}
 
 /**
- * เทียบตัวเลขสองช่วงของแคมเปญหนึ่ง
- *   หลัง  = วันที่ปรับ เป็นวันแรก (การปรับมีผลตั้งแต่วันนั้น)
- *   ก่อน  = ย้อนขึ้นไปจบที่วันก่อนวันที่ปรับ
- * ตั้งใจให้สองช่วงยาวเท่ากันโดยปริยาย จะได้ไม่ต้องหารเป็นค่าต่อวัน
+ * แคมเปญที่เอามาเป็น "ภาพรวม" ได้ในช่วงนี้ (วิธีที่ 2)
+ * เงื่อนไข: อยู่กลุ่มสินค้าเดียวกัน · ช่วงที่เทียบไม่มีการปรับที่นับเป็นจุดวัดผลเลย · มีตัวเลขครบ
+ * ถ้าในกลุ่มไม่มีพอ ค่อยขยายไปทั้งบัญชี
  */
-function logCompare(campaign, day, bFrom, aTo, auto = true) {
+function calControlSet(campaign, from, to) {
+  const meta = Store.campaign(campaign);
+  const group = meta?.product ? Taxonomy.groupOf(meta.product) : '';
+  const touched = new Set(
+    calItems().filter(i => i.measured && i.date >= from && i.date <= to).map(i => i.campaign));
+
+  const pick = sameGroup => adsCampaignNames().filter(n => {
+    if (n === campaign || touched.has(n)) return false;
+    if (!sameGroup) return true;
+    if (!group) return false;
+    const m = Store.campaign(n);
+    const g = m?.product ? Taxonomy.groupOf(m.product) : '';
+    return g === group;
+  });
+
+  let names = pick(true);
+  let scope = 'group';
+  if (names.length < CAL_MIN_CONTROL) { names = pick(false); scope = 'all'; }
+  return { names, scope, group };
+}
+
+/** รวมตัวเลขของหลายแคมเปญในช่วงเดียว */
+function calSumMany(names, from, to) {
+  let impressions = 0, clicks = 0, cost = 0, conversions = 0, days = 0, used = 0;
+  for (const n of names) {
+    const s = sumAdsRange(n, from, to);
+    if (!s) continue;
+    used++;
+    days = Math.max(days, s.days);
+    impressions += s.impressions; clicks += s.clicks;
+    cost += s.cost; conversions += s.conversions;
+  }
+  if (!used) return null;
+  return {
+    used, days, impressions, clicks,
+    cost: round(cost, 2), conversions: round(conversions, 2),
+    ctr: impressions ? round(clicks / impressions * 100, 2) : null,
+    cpc: clicks ? round(cost / clicks, 2) : null,
+    cvr: clicks ? round(conversions / clicks * 100, 2) : null,
+    cpa: conversions ? round(cost / conversions, 2) : null,
+    impr_share: null
+  };
+}
+
+/** ตัวชี้วัดที่โชว์ในแผงขวา */
+const CAL_KEYS = ['cpa', 'conversions', 'ctr', 'cpc'];
+
+/**
+ * วัดผลหนึ่งจุด — หัวใจของหน้านี้
+ * คืนทุกอย่างที่แผงขวาต้องใช้ พร้อมคำตัดสินที่ผ่านทั้ง 5 ชั้นแล้ว
+ */
+function calMeasure(item) {
+  const win = Cal.win;
+  const saved = Cal.ranges.get(item.id);
+  const auto = !saved;
+
+  // วิธีที่ 5 — เปลี่ยนกลยุทธ์ bid ต้องเว้นช่วงที่ Google ยังเรียนรู้อยู่
+  const learn = CAL_LEARN_CATS.includes(item.cat) ? CAL_LEARN_DAYS : 0;
+
   const upTo = adsDataUpTo();
-  const aFrom = day;
-  const wantTo = aTo;
+  const aFrom = saved ? saved.aFrom : calShift(item.date, learn);
+  const wantTo = saved ? saved.aTo : calShift(aFrom, win - 1);
   const realTo = upTo && upTo < wantTo ? upTo : wantTo;
 
   const afterWant = daysBetween(aFrom, wantTo) || 0;
   const afterHave = realTo >= aFrom ? (daysBetween(aFrom, realTo) || 0) : 0;
 
-  // ช่วงหลังยังเก็บไม่ครบ = ย่อช่วงก่อนให้สั้นเท่ากัน จะได้เทียบของยาวเท่ากันจริง ๆ
-  // (ถ้าเทียบ 7 วันก่อน กับ 3 วันหลัง ระบบจะต้องหารเป็นค่าต่อวัน ซึ่งอ่านแล้วงง)
-  if (auto && afterHave >= 1 && afterHave < afterWant) bFrom = logShift(day, -afterHave);
-  const bTo = logShift(day, -1);
+  // ช่วงหลังยังเก็บไม่ครบ = ย่อช่วงก่อนให้สั้นเท่ากัน จะได้เทียบของยาวเท่ากันจริง (วิธีที่ 1)
+  let bFrom = saved ? saved.bFrom : calShift(item.date, -win);
+  if (auto && afterHave >= 1 && afterHave < afterWant) bFrom = calShift(item.date, -afterHave);
+  const bTo = calShift(item.date, -1);
   const beforeDays = daysBetween(bFrom, bTo) || 0;
 
   const out = {
-    campaign, day, bFrom, bTo, aFrom, aTo: realTo, wantTo, auto,
+    item, win, learn, auto,
+    bFrom, bTo, aFrom, aTo: realTo, wantTo,
     beforeDays, afterWant, afterHave,
     waiting: Math.max(0, afterWant - afterHave),
     partial: afterHave > 0 && afterHave < afterWant,
-    before: null, after: null, cmp: null, conf: null, verdict: null
+    before: null, after: null, cmp: null, conf: null,
+    control: null, net: null, noise: null,
+    verdict: 'waiting', why: '', notes: []
   };
-  if (!hasAdsData() || beforeDays < 1 || afterHave < 1) return out;
 
-  const b = sumAdsRange(campaign, bFrom, bTo);
-  const a = sumAdsRange(campaign, aFrom, realTo);
-  if (!b || !a) return out;
+  if (!hasAdsData()) { out.verdict = 'nodata'; out.why = 'ยังไม่ได้เปิดระบบดึงตัวเลขรายวัน'; return out; }
+  if (afterHave < CAL_MIN_AFTER) {
+    out.verdict = 'waiting';
+    out.why = afterHave < 1
+      ? (learn ? `เว้นช่วงเรียนรู้ ${learn} วันก่อน แล้วค่อยเริ่มนับ` : 'ยังไม่มีตัวเลขหลังวันที่ปรับ')
+      : `มีข้อมูล ${afterHave}/${afterWant} วัน — รออีก ${out.waiting} วัน`;
+    return out;
+  }
 
-  out.before = b;
-  out.after = a;
-  const bBlock = { ...b, _days: b.days };
-  const aBlock = { ...a, _days: a.days };
+  const b = sumAdsRange(item.campaign, bFrom, bTo);
+  const a = sumAdsRange(item.campaign, aFrom, realTo);
+  if (!b || !a) { out.verdict = 'nodata'; out.why = 'ไม่มีตัวเลขของช่วงนี้ในชีต'; return out; }
+
+  out.before = b; out.after = a;
+  const bBlock = { ...b, _days: b.days }, aBlock = { ...a, _days: a.days };
+  out.bBlock = bBlock; out.aBlock = aBlock;
   out.cmp = compareBlocks(bBlock, aBlock, 'auto');
   out.conf = blockConfidence(bBlock, aBlock);
-  out.verdict = plainVerdict(out.cmp, bBlock, aBlock);
-  out.bBlock = bBlock;
-  out.aBlock = aBlock;
+
+  // ── วิธีที่ 2: หักภาพรวมออกด้วยแคมเปญที่ไม่ได้ปรับ
+  const ctl = calControlSet(item.campaign, bFrom, realTo);
+  if (ctl.names.length >= CAL_MIN_CONTROL) {
+    const cb = calSumMany(ctl.names, bFrom, bTo);
+    const ca = calSumMany(ctl.names, aFrom, realTo);
+    if (cb && ca) {
+      const cCmp = compareBlocks({ ...cb, _days: cb.days }, { ...ca, _days: ca.days }, 'auto');
+      const net = {};
+      for (const k of CAL_KEYS) {
+        const mine = out.cmp.rows.find(r => r.key === k);
+        const theirs = cCmp.rows.find(r => r.key === k);
+        if (mine && theirs && mine.deltaPct !== null && theirs.deltaPct !== null) {
+          net[k] = mine.deltaPct - theirs.deltaPct;
+        }
+      }
+      out.control = { ...ctl, cmp: cCmp, used: cb.used };
+      out.net = net;
+    }
+  }
+
+  // ── คำตัดสิน
+  const pv = plainVerdict(out.cmp, bBlock, aBlock);
+  if (out.conf && (out.conf.level === 'low' || out.conf.level === 'none')) {
+    out.verdict = 'unsure';
+    out.why = out.conf.waitDays
+      ? `conversion ยังน้อย — อีกราว ${out.conf.waitDays} วันถึงจะสรุปได้`
+      : (out.conf.reason || 'ข้อมูลยังน้อยเกินกว่าจะสรุป');
+  } else {
+    // มีภาพรวมให้หักออก = ตัดสินจากส่วนต่างสุทธิแทน
+    const score = out.net ? calNetScore(out.net) : null;
+    const level = score === null
+      ? ({ good: 'good', bad: 'bad', flat: 'flat', unsure: 'unsure' }[pv?.level] || 'flat')
+      : (score > 0.08 ? 'good' : score < -0.08 ? 'bad' : 'flat');
+    out.verdict = level;
+    out.why = pv?.detail || '';
+  }
+
+  // ── วิธีที่ 3: เทียบกับความแกว่งปกติของแคมเปญเอง
+  const cpaRow = out.cmp.rows.find(r => r.key === 'cpa');
+  out.noise = noiseVerdict(item.campaign, cpaRow ? cpaRow.deltaPct : null);
+  if (out.noise && !out.noise.beyond && (out.verdict === 'good' || out.verdict === 'bad')) {
+    out.verdict = 'flat';
+    out.notes.push('อยู่ในกรอบความแกว่งปกติของแคมเปญนี้ — ยังแยกไม่ออกว่าเป็นผลของการปรับ');
+  }
+
+  if (out.partial) out.notes.push(`ผลเบื้องต้น ${out.afterHave}/${out.afterWant} วัน · รออีก ${out.waiting} วัน`);
+  if (learn) out.notes.push(`เว้นช่วงเรียนรู้ของ Google ${learn} วันแรกแล้ว — เริ่มนับ ${thaiDate(aFrom)}`);
+
+  // การปรับอื่นที่ตกอยู่ในช่วงเทียบ
+  const others = calOtherPoints(item.campaign, item.id);
+  out.overlapAfter = others.filter(d => d >= aFrom && d <= realTo);
+  out.overlapBefore = others.filter(d => d >= bFrom && d <= bTo);
+
+  // การปรับที่ไม่ได้นับ แต่เกิดในช่วงหลัง
+  out.minorAfter = calItems().filter(i =>
+    !i.measured && i.campaign === item.campaign && i.date >= aFrom && i.date <= realTo);
+
   return out;
 }
 
-/** ช่วงเทียบของแถวหนึ่ง — ใช้ค่าที่ผู้ใช้เลือกไว้ถ้ามี ไม่งั้นใช้ค่าตั้งต้น */
-function logRangeFor(rowId, day) {
-  const saved = Log.ranges.get(rowId);
-  if (saved) return { ...saved, auto: false };
-  return { bFrom: logShift(day, -Log.win), aTo: logShift(day, Log.win - 1), auto: true };
-}
-
-/** วันอื่นที่แตะแคมเปญเดียวกันและตกอยู่ในช่วงที่กำลังเทียบ */
-function logOverlaps(days, cmpRange, day) {
-  const inBefore = [], inAfter = [];
-  for (const d of days.keys()) {
-    if (d === day) continue;
-    if (d >= cmpRange.bFrom && d <= cmpRange.bTo) inBefore.push(d);
-    else if (d >= cmpRange.aFrom && d <= cmpRange.aTo) inAfter.push(d);
+/** คะแนนรวมจากส่วนต่างสุทธิ (หลังหักภาพรวมออกแล้ว) */
+function calNetScore(net) {
+  let score = 0, w = 0;
+  for (const k of CAL_KEYS) {
+    const weight = VERDICT_WEIGHTS[k];
+    const m = METRIC_BY_KEY[k];
+    if (!weight || !m || net[k] === undefined || m.better === 'neutral') continue;
+    const signed = net[k] * (m.better === 'down' ? -1 : 1);
+    score += weight * Math.max(-1, Math.min(1, signed / 20));
+    w += weight;
   }
-  return { inBefore: inBefore.sort(), inAfter: inAfter.sort() };
+  return w ? score / w : null;
 }
 
-/* ── ชิ้นส่วนหน้าจอ ─────────────────────────────────────── */
+/* ── หน้าตา ─────────────────────────────────────────────── */
 
-/** ชิปตัวเลขสั้น: CPA ฿233 → ฿244 ▲5% */
-function logMetricChips(cmp, keys = LOG_KEY_METRICS) {
-  if (!cmp) return null;
-  const wrap = el('div', { class: 'log-nums' });
-  let any = false;
-  for (const key of keys) {
-    const r = cmp.rows.find(x => x.key === key);
-    if (!r || r.before === null || r.after === null) continue;
-    any = true;
-    const cls = r.good === null ? 'delta-flat' : r.good ? 'delta-up' : 'delta-down';
-    const arrow = r.dir === 'up' ? '▲' : r.dir === 'down' ? '▼' : '＝';
-    wrap.append(el('div', { class: 'log-num' },
-      el('span', { class: 'ln-key' }, r.metric.short + (r.perDay ? '/วัน' : '')),
-      el('span', { class: 'ln-val' }, fmtMetric(key, r.before)),
-      el('span', { class: 'ln-arrow' }, '→'),
-      el('span', { class: 'ln-val ln-after' }, fmtMetric(key, r.after)),
-      r.deltaPct === null
-        ? null
-        : el('span', { class: `ln-delta ${cls}` }, `${arrow}${fmt(Math.abs(r.deltaPct), 0)}%`)));
-  }
-  return any ? wrap : null;
-}
-
-const LOG_VERDICT_STYLE = {
-  good:   { cls: 'lv-good',   icon: '✓', text: 'ดีขึ้น' },
-  bad:    { cls: 'lv-bad',    icon: '✕', text: 'แย่ลง' },
-  flat:   { cls: 'lv-flat',   icon: '＝', text: 'ทรงตัว' },
-  unsure: { cls: 'lv-unsure', icon: '?', text: 'ยังตัดสินไม่ได้' }
+const CAL_VERDICT = {
+  good:    { cls: 'v-good',   label: '✓ ดีขึ้น' },
+  bad:     { cls: 'v-bad',    label: '✕ แย่ลง' },
+  flat:    { cls: 'v-flat',   label: '＝ ทรงตัว' },
+  unsure:  { cls: 'v-unsure', label: '? ยังตัดสินไม่ได้' },
+  waiting: { cls: 'v-wait',   label: '⏳ รอข้อมูล' },
+  nodata:  { cls: 'v-none',   label: '— ไม่มีข้อมูล' }
 };
 
-/** ป้ายคำตัดสิน + เหตุผลสั้น ๆ ว่าทำไมถึงตัดสินแบบนั้น */
-function logVerdictCell(res, overlap) {
-  if (!hasAdsData()) {
-    return el('div', { class: 'log-verdict lv-wait' },
-      el('span', { class: 'lv-badge' }, '— ไม่มีข้อมูล'),
-      el('span', { class: 'lv-why' }, 'ยังไม่ได้เปิดระบบดึงตัวเลขรายวัน'));
-  }
-  // ข้อมูลหลังวันที่ปรับน้อยกว่า 3 วัน = ยังไม่ตัดสิน ต่อให้คำนวณได้ก็ตาม
-  if (res.afterHave < LOG_MIN_AFTER_DAYS) {
-    return el('div', { class: 'log-verdict lv-wait' },
-      el('span', { class: 'lv-badge' }, '⏳ รอข้อมูล'),
-      el('span', { class: 'lv-why' },
-        res.afterHave < 1
-          ? 'ยังไม่มีตัวเลขหลังวันที่ปรับ'
-          : `มีข้อมูล ${res.afterHave}/${res.afterWant} วัน — รออีก ${res.waiting} วัน`));
-  }
-  if (!res.cmp) {
-    return el('div', { class: 'log-verdict lv-wait' },
-      el('span', { class: 'lv-badge' }, '— ไม่มีข้อมูล'),
-      el('span', { class: 'lv-why' }, 'ไม่มีตัวเลขของช่วงนี้ในชีต'));
-  }
-
-  const v = res.verdict || { level: 'unsure' };
-  const st = LOG_VERDICT_STYLE[v.level] || LOG_VERDICT_STYLE.unsure;
-  const box = el('div', { class: 'log-verdict ' + st.cls },
-    el('span', { class: 'lv-badge' }, `${st.icon} ${st.text}`));
-
-  // บอกเหตุผลของคำตัดสินเสมอ ไม่ใช่โยนป้ายมาเฉย ๆ
-  if (v.level === 'unsure') {
-    box.append(el('span', { class: 'lv-why' },
-      res.conf?.waitDays
-        ? `conversion ยังน้อย — อีกราว ${res.conf.waitDays} วันถึงจะสรุปได้`
-        : (res.conf?.reason || 'ข้อมูลยังน้อยเกินกว่าจะสรุป')));
-  } else if (v.detail) {
-    box.append(el('span', { class: 'lv-why' }, v.detail));
-  }
-  if (res.conf && res.conf.level === 'medium' && v.level !== 'unsure') {
-    box.append(el('span', { class: 'lv-why' }, 'พอเห็นทิศทาง แต่ยังไม่ควรฟันธง'));
-  }
-  if (res.partial) {
-    box.append(el('span', { class: 'lv-why' },
-      `ผลเบื้องต้น ${res.afterHave}/${res.afterWant} วัน · รออีก ${res.waiting} วัน`));
-  }
-
-  // การปรับอื่นในช่วง "หลัง" กวนผลตรง ๆ · ในช่วง "ก่อน" แค่ทำให้ฐานไม่นิ่ง
-  if (overlap.inAfter.length) {
-    box.append(el('span', { class: 'lv-warn' },
-      `⚠ ปนกับการปรับอีก ${overlap.inAfter.length} วันถัดมา`));
-  } else if (overlap.inBefore.length) {
-    box.append(el('span', { class: 'lv-why' },
-      `ฐานเทียบมีการปรับอีก ${overlap.inBefore.length} วัน`));
-  }
-  return box;
-}
-
-/** สรุปว่าวันนั้นแตะอะไรไปบ้าง */
-function logTouchCell(cell) {
-  const tags = [...cell.tags.entries()].sort((a, b) => b[1] - a[1]);
-  const lines = [];
-  for (const r of cell.recs) {
-    const t = String(r.change_detail || '').trim();
-    if (t) lines.push(t);
-  }
-  for (const c of cell.changes.slice(0, 4)) {
-    const t = String(c.detail || '').trim();
-    if (t) lines.push(t);
-  }
-  const total = cell.recs.length + cell.changes.length;
-
-  return el('div', {},
-    el('div', { class: 'log-tags' },
-      tags.slice(0, 3).map(([t, n]) => el('span', { class: 'tag' }, n > 1 ? `${t} ${n}` : t)),
-      tags.length > 3 ? el('span', { class: 'tag' }, `+${tags.length - 3}`) : null),
-    el('div', { class: 'log-detail-text' },
-      lines.length ? lines.join(' · ') : `${total} รายการ`));
-}
-
-/* ── วาดหน้า ─────────────────────────────────────────────── */
-
 function initLogPage() {
-  const host = $('#logPresets');
-  if (!host) return;
-  host.innerHTML = '';
-  for (const p of LOG_PRESETS) {
-    host.append(el('button', {
-      type: 'button', class: 'chip', 'data-preset': p.id,
-      'aria-pressed': String(p.id === Log.preset), text: p.label,
-      onclick: () => {
-        Log.preset = p.id;
-        $('#log_from').value = p.from();
-        $('#log_to').value = p.to();
-        $$('#logPresets .chip').forEach(c =>
-          c.setAttribute('aria-pressed', String(c.dataset.preset === p.id)));
-        logReset();
-      }
-    }));
-  }
-  $('#log_from').value = isoOffset(-89);
-  $('#log_to').value = todayISO();
+  if (Cal.built) return;
+  const grid = $('#calGrid');
+  if (!grid) return;
 
-  for (const id of ['#log_from', '#log_to', '#log_group', '#log_product', '#log_campaign']) {
-    $(id).addEventListener('input', () => {
-      if (id === '#log_from' || id === '#log_to') {
-        Log.preset = '';
-        $$('#logPresets .chip').forEach(c => c.setAttribute('aria-pressed', 'false'));
-      }
-      if (id === '#log_group') { $('#log_product').value = ''; $('#log_campaign').value = ''; }
-      if (id === '#log_product') $('#log_campaign').value = '';
-      logReset();
-    });
-  }
-  let t;
-  $('#log_q').addEventListener('input', () => {
-    clearTimeout(t);
-    t = setTimeout(logReset, 200);
+  const now = parseDate(todayISO()) || new Date();
+  Cal.month = new Date(Date.UTC(now.getFullYear(), now.getMonth(), 1));
+
+  $('#calPrev').addEventListener('click', () => { Cal.month.setUTCMonth(Cal.month.getUTCMonth() - 1); Cal.day = null; renderLogPage(); });
+  $('#calNext').addEventListener('click', () => { Cal.month.setUTCMonth(Cal.month.getUTCMonth() + 1); Cal.day = null; renderLogPage(); });
+  $('#calToday').addEventListener('click', () => {
+    const t = parseDate(todayISO());
+    Cal.month = new Date(Date.UTC(t.getFullYear(), t.getMonth(), 1));
+    Cal.day = todayISO();
+    renderLogPage();
   });
-
-  $$('#logWindowChips .chip').forEach(chip => chip.addEventListener('click', () => {
-    Log.win = Number(chip.dataset.win);
-    Log.ranges.clear();            // เปลี่ยนหน้าต่างหลัก = ล้างช่วงที่เลือกเองไว้
-    $$('#logWindowChips .chip').forEach(c =>
-      c.setAttribute('aria-pressed', String(c === chip)));
+  $('#calWindow').addEventListener('change', e => {
+    Cal.win = Number(e.target.value) || 7;
+    Cal.ranges.clear();
     renderLogPage();
-  }));
+  });
+  $('#calCampaign').addEventListener('change', e => { Cal.campaign = e.target.value; renderLogPage(); });
 
-  $$('#logSortChips .chip').forEach(chip => chip.addEventListener('click', () => {
-    Log.sort = chip.dataset.sort;
-    $$('#logSortChips .chip').forEach(c =>
-      c.setAttribute('aria-pressed', String(c === chip)));
-    renderLogPage();
-  }));
-}
-
-function logReset() {
-  Log.open.clear();
-  Log.ranges.clear();
-  Log.dayLimit.clear();
-  Log.campLimit = 8;
-  renderLogPage();
+  Cal.built = true;
 }
 
 function renderLogPage() {
-  syncCampaignSelects();
-  const host = $('#logBody');
-  if (!host) return;
-  host.innerHTML = '';
+  const grid = $('#calGrid');
+  if (!grid) return;
+  if (!Cal.month) initLogPage();
 
-  const index = logTouchIndex();
-  const upTo = adsDataUpTo();
-
-  // ประกอบข้อมูลรายแคมเปญ พร้อมตัวเลขที่ใช้เรียงลำดับ
-  const camps = [];
-  for (const [name, days] of index) {
-    const dates = [...days.keys()].sort((a, b) => b.localeCompare(a));
-    if (!dates.length) continue;
-    const touches = dates.reduce((n, d) => {
-      const c = days.get(d);
-      return n + c.recs.length + c.changes.length;
-    }, 0);
-    // ผลของวันที่ปรับล่าสุดที่มีข้อมูลครบ — ใช้เรียง "ผลแย่ลงมากสุด"
-    let worst = 0;
-    for (const d of dates.slice(0, 5)) {
-      const r = logRangeFor(`${name}|${d}`, d);
-      const res = logCompare(name, d, r.bFrom, r.aTo, r.auto);
-      const row = res.cmp?.rows.find(x => x.key === 'cpa');
-      if (row && row.deltaPct !== null && res.conf && res.conf.level !== 'low' && res.conf.level !== 'none') {
-        worst = Math.max(worst, row.deltaPct);
-      }
-    }
-    camps.push({ name, days, dates, touches, worst, meta: logCampaignMeta(name) });
+  // เติมรายชื่อแคมเปญ
+  const sel = $('#calCampaign');
+  if (sel) {
+    const cur = sel.value;
+    const names = [...new Set(calItems().map(i => i.campaign))].sort();
+    sel.innerHTML = '';
+    sel.append(el('option', { value: '' }, 'ทุกแคมเปญ'));
+    for (const n of names) sel.append(el('option', { value: n }, n));
+    sel.value = names.includes(cur) ? cur : '';
   }
 
-  const totalTouches = camps.reduce((n, c) => n + c.touches, 0);
-  const totalDays = camps.reduce((n, c) => n + c.dates.length, 0);
-  $('#logCount').textContent = camps.length
-    ? `${camps.length} แคมเปญ · แตะไป ${totalDays} วัน · รวม ${totalTouches} รายการ · ` +
-      `ตัวเลขเทียบ ${Log.win} วันก่อน กับ ${Log.win} วันตั้งแต่วันที่ปรับ` +
-      (upTo ? ` · ข้อมูลในชีตมีถึง ${thaiDate(upTo)}` : '')
-    : '';
+  const warn = $('#calWarn');
+  if (warn) {
+    warn.innerHTML = '';
+    if (!hasAdsData()) {
+      warn.append(el('div', { class: 'banner warn' },
+        el('span', { class: 'icon' }, '☁️'),
+        el('span', {}, 'ยังไม่มีตัวเลขรายวันในชีต METRICS — ปฏิทินจะแสดงการปรับได้ แต่วัดผลไม่ได้')));
+    }
+  }
 
-  if (!camps.length) {
-    host.append(el('div', { class: 'empty' },
-      el('strong', {}, 'ยังไม่มีการปรับในช่วงนี้'),
-      'ลองขยายช่วงเวลา หรือล้างตัวกรองดู'));
+  const y = Cal.month.getUTCFullYear(), m = Cal.month.getUTCMonth();
+  $('#calMonth').textContent = `${CAL_MONTH_TH[m]} ${y + 543}`;
+
+  const items = calItems().filter(i => !Cal.campaign || i.campaign === Cal.campaign);
+  const byDay = new Map();
+  for (const i of items) {
+    if (!byDay.has(i.date)) byDay.set(i.date, { points: [], minor: [] });
+    byDay.get(i.date)[i.measured ? 'points' : 'minor'].push(i);
+  }
+
+  // ── ตารางวัน
+  grid.innerHTML = '';
+  const first = new Date(Date.UTC(y, m, 1));
+  const start = new Date(first);
+  start.setUTCDate(1 - first.getUTCDay());
+  const today = todayISO();
+
+  for (let k = 0; k < 42; k++) {
+    const d = new Date(start);
+    d.setUTCDate(start.getUTCDate() + k);
+    const key = d.toISOString().slice(0, 10);
+    const out = d.getUTCMonth() !== m;
+    const cell = byDay.get(key) || { points: [], minor: [] };
+
+    const box = el('div', {
+      class: 'cal-cell' + (out ? ' is-out' : '') + (key === today ? ' is-today' : '') +
+             (key === Cal.day ? ' is-sel' : ''),
+      tabindex: '0', role: 'button',
+      'aria-label': `${thaiDate(key)} — ${cell.points.length} จุดวัดผล`,
+      onclick: () => { Cal.day = Cal.day === key ? null : key; renderLogPage(); },
+      onkeydown: e => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); Cal.day = Cal.day === key ? null : key; renderLogPage(); }
+      }
+    },
+      el('div', { class: 'cal-num' },
+        el('span', { class: 'n' }, String(d.getUTCDate())),
+        cell.points.length ? el('span', { class: 'cnt' }, String(cell.points.length)) : null));
+
+    for (const it of cell.points.slice(0, 2)) {
+      const res = calMeasure(it);
+      const v = CAL_VERDICT[res.verdict] || CAL_VERDICT.nodata;
+      box.append(el('div', { class: `cal-ev ${v.cls}`, title: `${it.campaign} · ${it.label} · ${v.label}` },
+        el('span', { class: 'ce-name' }, it.campaign),
+        el('span', { class: 'ce-meta' }, `${it.label} · ${v.label}`)));
+    }
+    if (cell.points.length > 2) {
+      box.append(el('div', { class: 'cal-more' }, `+ อีก ${cell.points.length - 2}`));
+    }
+    if (cell.minor.length) {
+      const n = cell.minor.reduce((s, i) => s + i.count, 0);
+      const labels = [...new Set(cell.minor.map(i => i.label))].slice(0, 2).join(' · ');
+      box.append(el('div', { class: 'cal-minor', title: 'การปรับที่ไม่ได้นับเป็นจุดวัดผล' },
+        `● ${labels}${n > cell.minor.length ? ` ${n}` : ''}`));
+    }
+    grid.append(box);
+  }
+
+  renderCalLegend();
+  renderCalPanel(y, m, items);
+}
+
+function renderCalLegend() {
+  const host = $('#calLegend');
+  if (!host) return;
+  host.innerHTML = '';
+  for (const k of ['good', 'bad', 'flat', 'unsure', 'waiting']) {
+    const v = CAL_VERDICT[k];
+    host.append(el('span', { class: 'cl-item' },
+      el('i', { class: 'cl-dot ' + v.cls }), v.label.replace(/^\S+\s/, '')));
+  }
+  host.append(el('span', { class: 'cl-item cl-end' }, '● เทา = การปรับที่ไม่ได้นับเป็นจุดวัดผล'));
+}
+
+/* ── แผงขวา ─────────────────────────────────────────────── */
+
+function renderCalPanel(y, m, items) {
+  const head = $('#calPanelHead'), body = $('#calPanelBody');
+  head.innerHTML = ''; body.innerHTML = '';
+
+  if (Cal.day) {
+    const day = Cal.day;
+    const points = items.filter(i => i.date === day && i.measured);
+    const minor = items.filter(i => i.date === day && !i.measured);
+    head.append(
+      el('div', { class: 'cph-row' },
+        el('h3', {}, thaiDate(day)),
+        el('button', { class: 'btn btn-sm btn-ghost', onclick: () => { Cal.day = null; renderLogPage(); } }, 'ดูทั้งเดือน')),
+      el('p', {}, points.length ? `${points.length} จุดวัดผล` : 'ไม่มีจุดวัดผลวันนี้'));
+
+    if (!points.length) {
+      body.append(el('div', { class: 'empty' },
+        el('strong', {}, 'วันนี้ไม่มีการปรับที่นับเป็นจุดวัดผล'),
+        minor.length
+          ? `มีแต่ ${[...new Set(minor.map(i => i.label))].join(' · ')} ซึ่งไม่ได้ตั้งให้วัดผล`
+          : 'ลองกดวันอื่นในปฏิทิน'));
+    }
+    for (const it of points) body.append(calCard(calMeasure(it)));
+    if (minor.length) body.append(calMinorBox(minor));
     return;
   }
 
-  if (Log.sort === 'most') camps.sort((a, b) => b.touches - a.touches);
-  else if (Log.sort === 'worst') camps.sort((a, b) => b.worst - a.worst);
-  else camps.sort((a, b) => b.dates[0].localeCompare(a.dates[0]));
+  // ── สรุปทั้งเดือน
+  const inMonth = items.filter(i => {
+    const d = parseDate(i.date);
+    return d && d.getFullYear() === y && d.getMonth() === m && i.measured;
+  });
+  const results = inMonth.map(calMeasure);
+  const n = v => results.filter(r => r.verdict === v).length;
 
-  const shown = camps.slice(0, Log.campLimit);
-  for (const c of shown) host.append(logCampaignBlock(c));
+  head.append(el('div', { class: 'cph-row' }, el('h3', {}, `${CAL_MONTH_TH[m]} ${y + 543}`)),
+    el('p', {}, `${inMonth.length} จุดวัดผลในเดือนนี้`));
 
-  if (camps.length > shown.length) {
-    host.append(el('div', { class: 'timeline-more' },
-      el('button', {
-        class: 'btn btn-sm', type: 'button',
-        onclick: () => { Log.campLimit += 8; renderLogPage(); }
-      }, `แสดงเพิ่ม (เหลืออีก ${camps.length - shown.length} แคมเปญ)`)));
+  body.append(el('div', { class: 'cal-stats' },
+    el('div', { class: 'cs-box cs-good' }, el('span', { class: 'k' }, 'ดีขึ้น'), el('span', { class: 'v' }, String(n('good')))),
+    el('div', { class: 'cs-box cs-bad' }, el('span', { class: 'k' }, 'แย่ลง'), el('span', { class: 'v' }, String(n('bad')))),
+    el('div', { class: 'cs-box' }, el('span', { class: 'k' }, 'ทรงตัว'), el('span', { class: 'v' }, String(n('flat')))),
+    el('div', { class: 'cs-box cs-warn' }, el('span', { class: 'k' }, 'ยังตัดสินไม่ได้'),
+      el('span', { class: 'v' }, String(n('unsure') + n('waiting'))))));
+
+  const noReason = results.filter(r =>
+    !r.item.recs.some(x => String(x.reason || '').trim()));
+  body.append(el('div', { class: 'cp-sub' }, `รอใส่เหตุผล ${noReason.length} รายการ`));
+
+  if (!noReason.length) {
+    body.append(el('div', { class: 'empty' }, el('strong', {}, 'ใส่เหตุผลครบแล้ว'), 'ทุกจุดวัดผลของเดือนนี้มีเหตุผลกำกับหมด'));
   }
-}
-
-/**
- * ภาพรวมของแคมเปญ: 30 วันล่าสุด เทียบ 30 วันก่อนหน้า
- * มีไว้ตอบคำถาม "เดือนนี้แคมเปญนี้ไปทางไหน" โดยไม่ต้องอ่านทีละแถว
- */
-function logCampaignTrend(name) {
-  const upTo = adsDataUpTo();
-  if (!hasAdsData() || !upTo) return null;
-  const to = upTo, from = logShift(to, -29);
-  const pTo = logShift(from, -1), pFrom = logShift(pTo, -29);
-  const a = sumAdsRange(name, from, to);
-  const b = sumAdsRange(name, pFrom, pTo);
-  if (!a || !b) return null;
-  const cmp = compareBlocks({ ...b, _days: b.days }, { ...a, _days: a.days }, 'auto');
-  const chips = logMetricChips(cmp, ['cpa', 'conversions']);
-  if (!chips) return null;
-  return el('div', { class: 'ch-trend' },
-    el('div', { class: 'ch-trend-label' }, '30 วันล่าสุด เทียบ 30 วันก่อนหน้า'),
-    chips);
-}
-
-/** แคมเปญหนึ่ง = การ์ดหนึ่งใบ มีตารางวันอยู่ข้างใน */
-function logCampaignBlock(c) {
-  const collapsed = Log.openCamps instanceof Set && !Log.openCamps.has(c.name);
-
-  const head = el('header', { class: 'camp-head' },
-    el('div', { class: 'ch-main' },
-      el('h3', {}, c.name),
-      el('div', { class: 'ch-sub' },
-        (c.meta.group ? `${c.meta.group} › ${c.meta.product} · ` : '') +
-        `แตะไป ${c.dates.length} วัน · ${c.touches} รายการ · ล่าสุด ${thaiDate(c.dates[0])}`)),
-    logCampaignTrend(c.name),
-    el('button', {
-      class: 'btn btn-sm btn-ghost ch-toggle', type: 'button',
-      onclick: () => {
-        if (!(Log.openCamps instanceof Set)) {
-          Log.openCamps = new Set(); // กดครั้งแรก = พับทุกอันยกเว้นที่เหลือกางอยู่
-          for (const el2 of $$('.camp-block')) {
-            const n = el2.dataset.camp;
-            if (n && n !== c.name) Log.openCamps.add(n);
-          }
-        } else if (collapsed) Log.openCamps.add(c.name);
-        else Log.openCamps.delete(c.name);
-        renderLogPage();
-      }
-    }, collapsed ? 'กาง' : 'พับ'));
-
-  const block = el('section', { class: 'camp-block', 'data-camp': c.name }, head);
-  if (collapsed) return block;
-
-  const table = el('table', { class: 'data log-table' });
-  const anyReason = c.dates.some(d =>
-    c.days.get(d).recs.some(r => String(r.reason || '').trim() || String(r.expected || '').trim()));
-
-  const headRow = el('tr', {},
-    el('th', { class: 'lc-date' }, 'วันที่ปรับ'),
-    el('th', { class: 'lc-what' }, 'แตะอะไรไปบ้าง'),
-    el('th', { class: 'lc-num' }, `${Log.win} วันก่อน → ${Log.win} วันหลัง`),
-    el('th', { class: 'lc-verdict' }, 'ผล'));
-  if (anyReason) headRow.append(el('th', { class: 'lc-why' }, 'เหตุผล / ผลที่คาดหวัง'));
-  table.append(el('thead', {}, headRow));
-
-  const cols = anyReason ? 5 : 4;
-  const tb = el('tbody');
-  const limit = Log.dayLimit.get(c.name) || 10;
-  const dates = c.dates.slice(0, limit);
-
-  for (const d of dates) {
-    const cell = c.days.get(d);
-    const rowId = `${c.name}|${d}`;
-    const range = logRangeFor(rowId, d);
-    const res = logCompare(c.name, d, range.bFrom, range.aTo, range.auto);
-    const overlap = logOverlaps(c.days, res, d);
-    const isOpen = Log.open.has(rowId);
-
-    const tr = el('tr', {
-      class: 'log-row' + (isOpen ? ' is-open' : ''),
-      tabindex: '0',
-      title: 'กดเพื่อเลือกช่วงเทียบเอง และดูตัวเลขรายวัน',
-      onclick: () => { if (isOpen) Log.open.delete(rowId); else Log.open.add(rowId); renderLogPage(); },
-      onkeydown: e => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          if (isOpen) Log.open.delete(rowId); else Log.open.add(rowId);
-          renderLogPage();
-        }
-      }
+  for (const r of noReason.slice(0, 30)) {
+    const v = CAL_VERDICT[r.verdict] || CAL_VERDICT.nodata;
+    body.append(el('div', {
+      class: `cal-mini ${v.cls}`, tabindex: '0', role: 'button',
+      onclick: () => { Cal.day = r.item.date; renderLogPage(); },
+      onkeydown: e => { if (e.key === 'Enter') { Cal.day = r.item.date; renderLogPage(); } }
     },
-      el('td', { class: 'lc-date' },
-        el('div', { class: 'cell-strong' }, thaiDate(d)),
-        el('div', { class: 'cell-sub' }, relativeDay(d))),
-      el('td', { class: 'lc-what' }, logTouchCell(cell)),
-      el('td', { class: 'lc-num' },
-        res.cmp ? logMetricChips(res.cmp) : el('span', { class: 'log-pending' }, '—')),
-      el('td', { class: 'lc-verdict' }, logVerdictCell(res, overlap)));
-
-    if (anyReason) {
-      const reasons = cell.recs.map(r => String(r.reason || '').trim()).filter(Boolean);
-      const expects = cell.recs.map(r => String(r.expected || '').trim()).filter(Boolean);
-      tr.append(el('td', { class: 'lc-why' },
-        reasons.length ? el('div', { class: 'log-wrap-text' }, reasons.join(' · ')) : null,
-        expects.length ? el('div', { class: 'log-wrap-text lw-exp' }, '→ ' + expects.join(' · ')) : null,
-        (!reasons.length && !expects.length && cell.recs.length)
-          ? el('button', {
-              class: 'btn btn-sm btn-ghost', type: 'button',
-              title: 'เปิดบันทึกของวันนี้ขึ้นไปใส่เหตุผล',
-              onclick: e => { e.stopPropagation(); Form.load(cell.recs[0]); focusForm(); }
-            }, '＋ ใส่เหตุผล')
-          : null,
-        (!reasons.length && !expects.length && !cell.recs.length)
-          ? el('span', { class: 'log-pending' }, '—') : null));
-    }
-    tb.append(tr);
-
-    if (isOpen) {
-      tb.append(el('tr', { class: 'log-detail-row' },
-        el('td', { colspan: String(cols) }, logDayDetail(c, d, rowId, res, overlap))));
-    }
+      el('div', { class: 'cm-name' }, r.item.campaign),
+      el('div', { class: 'cm-meta' }, `${thaiDate(r.item.date)} · ${r.item.label} · ${v.label}`)));
   }
-
-  table.append(tb);
-  block.append(el('div', { class: 'table-wrap log-wrap' }, table));
-
-  if (c.dates.length > dates.length) {
-    block.append(el('div', { class: 'timeline-more' },
-      el('button', {
-        class: 'btn btn-sm', type: 'button',
-        onclick: () => { Log.dayLimit.set(c.name, limit + 20); renderLogPage(); }
-      }, `ดูอีก ${c.dates.length - dates.length} วันของแคมเปญนี้`)));
-  }
-  return block;
 }
 
-/* ── กล่องรายละเอียด: เลือกช่วงเทียบเอง + ตัวเลขรายวัน ──── */
+/** การ์ดหนึ่งจุดวัดผลในแผงขวา */
+function calCard(res) {
+  const it = res.item;
+  const v = CAL_VERDICT[res.verdict] || CAL_VERDICT.nodata;
+  const card = el('div', { class: `cal-card ${v.cls}` });
 
-function logDayDetail(c, day, rowId, res, overlap) {
-  const box = el('div', { class: 'log-detail-box' });
+  card.append(
+    el('div', { class: 'cc-name' }, it.campaign),
+    el('div', { class: 'cc-tags' },
+      el('span', { class: 'tag tag-cat' }, it.label),
+      it.byHand ? el('span', { class: 'tag' }, 'จดเอง') : null),
+    el('div', { class: 'cc-what' }, calWhatText(it)),
+    el('span', { class: `cc-verdict ${v.cls}` }, v.label));
 
-  // ── แถบเลือกช่วงเทียบ
-  const setRange = (bFrom, aTo) => {
-    Log.ranges.set(rowId, { bFrom, aTo });
+  if (res.why) card.append(el('div', { class: 'cc-why' }, res.why));
+  for (const note of res.notes) card.append(el('div', { class: 'cc-note' }, note));
+
+  // ── ช่วงที่เทียบ — แก้เองได้
+  const setRange = (bFrom, aFrom, aTo) => {
+    Cal.ranges.set(it.id, { bFrom, aFrom, aTo });
     renderLogPage();
   };
-  const quick = el('div', { class: 'chips' });
-  for (const n of [3, 7, 14, 30, 60]) {
-    const active = res.beforeDays === n && res.afterWant === n;
-    quick.append(el('button', {
-      type: 'button', class: 'chip', 'aria-pressed': String(active),
-      onclick: e => { e.stopPropagation(); setRange(logShift(day, -n), logShift(day, n - 1)); }
-    }, `${n} วัน`));
-  }
+  card.append(el('div', { class: 'cc-win' },
+    el('span', { class: 'ccw-lab' }, 'เทียบ'),
+    el('input', {
+      type: 'date', value: res.bFrom, max: res.bTo,
+      onchange: e => setRange(e.target.value, res.aFrom, res.wantTo)
+    }),
+    el('span', {}, '–'),
+    el('span', { class: 'ccw-fix' }, thaiDate(res.bTo)),
+    el('span', { class: 'ccw-lab' }, 'กับ'),
+    el('span', { class: 'ccw-fix' }, thaiDate(res.aFrom)),
+    el('span', {}, '–'),
+    el('input', {
+      type: 'date', value: res.wantTo, min: res.aFrom,
+      onchange: e => setRange(res.bFrom, res.aFrom, e.target.value)
+    }),
+    res.auto ? null : el('button', {
+      class: 'btn btn-sm btn-ghost', type: 'button',
+      onclick: () => { Cal.ranges.delete(it.id); renderLogPage(); }
+    }, 'คืนค่าเดิม')));
 
-  box.append(el('div', { class: 'cmp-bar', onclick: e => e.stopPropagation() },
-    el('div', { class: 'cmp-field' },
-      el('span', { class: 'field-label' }, 'ช่วงก่อน — ตั้งแต่'),
-      el('input', {
-        type: 'date', value: res.bFrom, max: logShift(day, -1),
-        onchange: e => setRange(e.target.value, res.wantTo)
-      }),
-      el('span', { class: 'cmp-to' }, `ถึง ${thaiDate(res.bTo)} · ${res.beforeDays} วัน`)),
-    el('div', { class: 'cmp-field' },
-      el('span', { class: 'field-label' }, 'ช่วงหลัง — ถึง'),
-      el('input', {
-        type: 'date', value: res.wantTo, min: day,
-        onchange: e => setRange(res.bFrom, e.target.value)
-      }),
-      el('span', { class: 'cmp-to' },
-        `เริ่ม ${thaiDate(res.aFrom)} · มีข้อมูล ${res.afterHave} วัน` +
-        (res.waiting ? ` · รออีก ${res.waiting} วัน` : ''))),
-    el('div', { class: 'cmp-field' },
-      el('span', { class: 'field-label' }, 'ช่วงสำเร็จรูป'),
-      quick)));
-
-  // ── เตือนว่าช่วงที่เทียบมีการปรับอื่นปนอยู่
-  if (overlap.inBefore.length || overlap.inAfter.length) {
-    const list = el('div', { class: 'cmp-warn' },
-      el('b', {}, '⚠ ช่วงที่เทียบมีการปรับอื่นปนอยู่ '),
-      'ตัวเลขที่เห็นจึงไม่ใช่ผลของวันนี้อย่างเดียว — เลื่อนขอบช่วงให้เลี่ยงวันพวกนี้ได้');
-    const chips = el('div', { class: 'cmp-warn-days' });
-    for (const d of [...overlap.inBefore, ...overlap.inAfter]) {
-      const cell = c.days.get(d);
-      const n = cell.recs.length + cell.changes.length;
-      chips.append(el('button', {
-        type: 'button', class: 'chip',
-        title: [...cell.tags.keys()].join(' · '),
-        onclick: e => {
-          e.stopPropagation();
-          // กดวันที่ปนอยู่ = ขยับขอบช่วงให้เริ่มหลังวันนั้น
-          if (d < day) setRange(logShift(d, 1), res.wantTo);
-          else setRange(res.bFrom, logShift(d, -1));
-        }
-      }, `${thaiDate(d)} · ${n} รายการ`));
-    }
-    list.append(chips);
-    box.append(list);
-  }
-
-  // ── ผลเทียบ
+  // ── ตัวเลข
   if (res.cmp) {
-    const sum = verdictSummary(res.cmp, res.bBlock, res.aBlock);
-    if (sum) box.append(sum);
-    box.append(deltaTable(res.cmp));
-    const conf = confidenceNote(res.bBlock, res.aBlock);
-    if (conf) box.append(conf);
-  } else {
-    box.append(el('p', { class: 'card-note' },
-      'ยังไม่มีตัวเลขของช่วงนี้ในชีต METRICS — ลองขยายช่วง หรือรอให้สคริปต์ดึงข้อมูลรอบถัดไป'));
+    const nums = el('div', { class: 'cc-nums' });
+    for (const key of CAL_KEYS) {
+      const r = res.cmp.rows.find(x => x.key === key);
+      if (!r || r.before === null || r.after === null) continue;
+      const cls = r.good === null ? 'delta-flat' : r.good ? 'delta-up' : 'delta-down';
+      const arrow = r.dir === 'up' ? '▲' : r.dir === 'down' ? '▼' : '＝';
+      nums.append(
+        el('span', { class: 'cn-k' }, r.metric.short + (r.perDay ? '/วัน' : '')),
+        el('span', { class: 'cn-v' }, fmtMetric(key, r.before), ' → ',
+          el('b', {}, fmtMetric(key, r.after))),
+        el('span', { class: `cn-d ${cls}` },
+          r.deltaPct === null ? '' : `${arrow}${fmt(Math.abs(r.deltaPct), 0)}%`));
+    }
+    card.append(nums);
   }
 
-  // ── ตัวเลขรายวันรอบ ๆ วันที่ปรับ
-  box.append(logDayStrip(c, day, res));
+  // ── วิธีที่ 2 — เทียบกับภาพรวม
+  if (res.control && res.net) {
+    const cpaNet = res.net.cpa;
+    const ctlCpa = res.control.cmp.rows.find(r => r.key === 'cpa');
+    const mineCpa = res.cmp.rows.find(r => r.key === 'cpa');
+    const box = el('div', { class: 'cc-control' });
+    box.append(el('div', { class: 'ccc-head' },
+      el('b', {}, '📊 เทียบกับแคมเปญที่ไม่ได้ปรับ '),
+      `${res.control.used} แคมเปญ` + (res.control.scope === 'group' && res.control.group
+        ? ` ในกลุ่ม ${res.control.group}` : ' ทั้งบัญชี')));
+    if (mineCpa && ctlCpa && mineCpa.deltaPct !== null && ctlCpa.deltaPct !== null) {
+      const move = v => Math.abs(v) < 1 ? 'แทบไม่ขยับ' : `${v > 0 ? 'ขึ้น' : 'ลง'} ${fmt(Math.abs(v), 0)}%`;
+      const same = Math.abs(cpaNet) < 1;
+      box.append(el('div', { class: 'ccc-line' },
+        `CPA ของเรา${move(mineCpa.deltaPct)} · ภาพรวม${move(ctlCpa.deltaPct)} — `,
+        same
+          ? el('b', {}, 'พอ ๆ กับภาพรวม')
+          : el('b', { class: cpaNet < 0 ? 'delta-up' : 'delta-down' },
+              cpaNet < 0
+                ? `ดีกว่าภาพรวม ${fmt(Math.abs(cpaNet), 0)}%`
+                : `แย่กว่าภาพรวม ${fmt(Math.abs(cpaNet), 0)}%`)));
+    }
+    card.append(box);
+  } else if (res.cmp) {
+    card.append(el('div', { class: 'cc-note' },
+      'ไม่มีแคมเปญที่ไม่ได้ปรับให้เทียบภาพรวมในช่วงนี้ — ตัวเลขจึงยังมีผลของฤดูกาลปนอยู่'));
+  }
 
-  // ── รายการที่แตะวันนั้น + ปุ่มจัดการ
-  box.append(logTouchList(c.days.get(day)));
-  return box;
+  // ── วิธีที่ 3 — ความแกว่งปกติ
+  if (res.noise) {
+    card.append(el('div', { class: `cc-noise ${res.noise.beyond ? 'is-beyond' : ''}` },
+      el('b', {}, res.noise.beyond ? '📈 เกินกรอบความแกว่งปกติ ' : '📉 ยังอยู่ในกรอบความแกว่งปกติ '),
+      res.noise.text));
+  }
+
+  // ── การปรับอื่นที่ปนอยู่
+  if (res.overlapAfter?.length) {
+    card.append(el('div', { class: 'cc-warn' },
+      `⚠ หลังวันนี้ยังมีจุดวัดผลอื่นอีก ${res.overlapAfter.length} วัน — ผลที่เห็นปนกันอยู่`));
+  }
+  if (res.minorAfter?.length) {
+    const n = res.minorAfter.reduce((s, i) => s + i.count, 0);
+    const labels = [...new Set(res.minorAfter.map(i => i.label))].join(' · ');
+    card.append(el('div', { class: 'cc-minor' },
+      el('b', {}, 'ช่วงนี้มีการปรับที่ไม่ได้นับด้วย: '), `${labels} รวม ${n} รายการ`));
+  }
+
+  // ── เหตุผล / ผลที่คาดหวัง
+  card.append(calFieldBox(it, 'reason', 'เหตุผลในการปรับ', 'พิมพ์เหตุผลที่ปรับ…'));
+  card.append(calFieldBox(it, 'expected', 'ผลที่คาดหวัง', 'อยากให้ผลออกมาเป็นยังไง…'));
+
+  return card;
+}
+
+function calWhatText(it) {
+  const lines = [];
+  for (const r of it.recs) {
+    const t = String(r.change_detail || '').trim();
+    if (t) lines.push(t);
+  }
+  for (const c of it.changes.slice(0, 3)) {
+    const t = String(c.detail || '').trim();
+    if (t) lines.push(t);
+  }
+  if (it.changes.length > 3) lines.push(`และอีก ${it.changes.length - 3} รายการ`);
+  return lines.join(' · ') || `${it.count} รายการ`;
+}
+
+/** ช่องกรอกเหตุผล/ผลที่คาดหวัง — พิมพ์ในแผงได้เลย บันทึกตอนออกจากช่อง */
+function calFieldBox(it, field, label, placeholder) {
+  const cur = it.recs.map(r => String(r[field] || '').trim()).filter(Boolean)[0] || '';
+  const status = el('span', { class: 'ccf-status' });
+  const ta = el('textarea', {
+    class: 'cc-input', rows: '2', placeholder,
+    onchange: async e => {
+      const val = e.target.value.trim();
+      status.textContent = 'กำลังบันทึก…';
+      status.className = 'ccf-status';
+      try {
+        await calSaveField(it, field, val);
+        status.textContent = '✓ บันทึกแล้ว';
+        status.className = 'ccf-status is-ok';
+        setTimeout(() => { status.textContent = ''; }, 2200);
+      } catch (err) {
+        status.textContent = 'บันทึกไม่สำเร็จ: ' + (err.message || err);
+        status.className = 'ccf-status is-bad';
+      }
+    }
+  });
+  ta.value = cur;
+  return el('div', { class: 'cc-field' },
+    el('div', { class: 'ccf-head' }, el('span', {}, label), status), ta);
 }
 
 /**
- * ตัวเลขรายวันของแคมเปญ เรียงใหม่→เก่า รอบ ๆ วันที่ปรับ
- * แถบสีบอกว่าวันไหนอยู่ในช่วง "ก่อน" หรือ "หลัง" · ธงบอกวันที่มีการปรับ
- * กดวันไหนก็ได้เพื่อย้ายขอบของช่วงเทียบไปที่วันนั้น
+ * เขียนเหตุผลลงบันทึกของวันนั้น
+ * ถ้าวันนั้นยังไม่มีบันทึก (มีแต่รายการที่ดึงมาจาก Google Ads) จะสร้างบันทึกให้ใหม่
  */
-function logDayStrip(c, day, res) {
-  const wrap = el('div', { class: 'day-strip' });
-  wrap.append(el('div', { class: 'ds-head' },
-    el('b', {}, 'ตัวเลขรายวันของแคมเปญนี้ '),
-    el('span', { class: 'card-note' },
-      'กดวันก่อนวันที่ปรับ = ย้ายจุดเริ่มของช่วงก่อน · กดวันหลัง = ย้ายจุดจบของช่วงหลัง'),
-    el('div', { class: 'ds-legend' },
-      el('span', { class: 'dsl dsl-before' }, 'ช่วงก่อน'),
-      el('span', { class: 'dsl dsl-day' }, 'วันที่ปรับ'),
-      el('span', { class: 'dsl dsl-after' }, 'ช่วงหลัง'),
-      el('span', { class: 'dsl dsl-none' }, 'นอกช่วงเทียบ'))));
-
-  if (!hasAdsData()) {
-    wrap.append(el('p', { class: 'card-note' }, 'ยังไม่มีข้อมูลรายวันในชีต METRICS'));
-    return wrap;
+async function calSaveField(it, field, val) {
+  if (!it.recs.length) {
+    const product = Store.campaign(it.campaign)?.product || '';
+    const rec = {
+      id: Store.newId(),
+      date: it.date,
+      campaign: it.campaign,
+      product,
+      product_group: product ? Taxonomy.groupOf(product) : '',
+      ad_group: '',
+      tags: Object.entries(TAG_TO_CAT).find(([, c]) => c === it.cat)?.[0] || 'อื่น ๆ',
+      change_detail: calWhatText(it),
+      reason: '', expected: '', result_note: '',
+      status: 'รอผล', budget: '', bid: '',
+      auto_key: `cal|${it.id}`
+    };
+    rec[field] = val;
+    await Store.create(rec);
+    it.recs.push(rec);
+    it.byHand = true;
+  } else {
+    for (const r of it.recs) {
+      if (String(r[field] || '') === val) continue;
+      await Store.update({ ...r, [field]: val });
+      r[field] = val;
+    }
   }
-
-  const pad = Math.max(14, Math.max(res.beforeDays, res.afterWant) + 4);
-  const from = logShift(day, -pad);
-  const to = logShift(day, pad);
-  const upTo = adsDataUpTo();
-
-  const rows = (Store.metrics || [])
-    .filter(m => String(m.campaign || '').trim() === c.name)
-    .filter(m => String(m.date) >= from && String(m.date) <= to)
-    .sort((a, b) => String(b.date).localeCompare(String(a.date)));
-
-  if (!rows.length) {
-    wrap.append(el('p', { class: 'card-note' }, 'ไม่มีตัวเลขของแคมเปญนี้ในช่วงนี้'));
-    return wrap;
-  }
-
-  const table = el('table', { class: 'data ds-table' });
-  table.append(el('thead', {}, el('tr', {},
-    el('th', {}, 'วันที่'),
-    el('th', { class: 'num' }, 'Cost'),
-    el('th', { class: 'num' }, 'Clicks'),
-    el('th', { class: 'num' }, 'Conv'),
-    el('th', { class: 'num' }, 'CPA'),
-    el('th', {}, 'การปรับ'))));
-
-  const tb = el('tbody');
-  for (const m of rows) {
-    const d = String(m.date);
-    const inB = d >= res.bFrom && d <= res.bTo;
-    const inA = d >= res.aFrom && d <= res.aTo;
-    const cell = c.days.get(d);
-    const cost = num(m.cost) || 0, conv = num(m.conversions) || 0;
-
-    const cls = ['ds-row'];
-    if (d === day) cls.push('is-day');
-    else if (inB) cls.push('in-before');
-    else if (inA) cls.push('in-after');
-    if (cell) cls.push('has-touch');
-
-    tb.append(el('tr', {
-      class: cls.join(' '),
-      title: d === day ? 'วันที่ปรับ' : 'กดเพื่อย้ายขอบช่วงเทียบมาที่วันนี้',
-      onclick: e => {
-        e.stopPropagation();
-        if (d === day) return;
-        const rowId = `${c.name}|${day}`;
-        if (d < day) Log.ranges.set(rowId, { bFrom: d, aTo: res.wantTo });
-        else Log.ranges.set(rowId, { bFrom: res.bFrom, aTo: d });
-        renderLogPage();
-      }
-    },
-      el('td', {},
-        el('span', { class: 'ds-date' }, thaiDate(d)),
-        d === day ? el('span', { class: 'ds-flag ds-flag-day' }, 'วันที่ปรับ') : null),
-      el('td', { class: 'num' }, fmt(cost, 0)),
-      el('td', { class: 'num' }, fmt(num(m.clicks) || 0, 0)),
-      el('td', { class: 'num' }, fmt(conv, 2)),
-      el('td', { class: 'num' }, conv ? fmtMetric('cpa', cost / conv) : '—'),
-      el('td', {}, cell
-        ? el('span', { class: 'ds-touch' },
-            `🔧 ${[...cell.tags.keys()].slice(0, 2).join(' · ')}` +
-            ([...cell.tags.keys()].length > 2 ? ' …' : ''))
-        : null)));
-  }
-  table.append(tb);
-  const scroller = el('div', { class: 'table-wrap ds-wrap' }, table);
-  wrap.append(scroller);
-  // เปิดมาให้เห็นวันที่ปรับกลางจอเลย ไม่ต้องเลื่อนหาเอง (เลื่อนเฉพาะในกล่อง ไม่ขยับทั้งหน้า)
-  requestAnimationFrame(() => {
-    const row = scroller.querySelector('tr.is-day');
-    if (row) scroller.scrollTop = Math.max(0, row.offsetTop - scroller.clientHeight / 2);
-  });
-  if (upTo && to > upTo) {
-    wrap.append(el('p', { class: 'card-note' },
-      `ข้อมูลในชีตมีถึง ${thaiDate(upTo)} — วันหลังจากนั้นยังไม่ถูกดึงมา`));
-  }
-  return wrap;
+  _calCache = null;
+  refreshAll();
 }
 
-/** รายการที่แตะในวันนั้น + ปุ่มจัดการ */
-function logTouchList(cell) {
-  const box = el('div', { class: 'ldb-changes-wrap' });
-  box.append(el('div', { class: 'ds-head' },
-    el('b', {}, `แตะอะไรไปบ้างวันนี้ (${cell.recs.length + cell.changes.length} รายการ)`)));
-
-  const list = el('div', { class: 'ldb-changes' });
-  for (const r of cell.recs) {
-    list.append(el('div', { class: 'chg-row' },
-      el('span', { class: 'chg-time' }, recTime(r) || '—'),
-      el('div', { class: 'chg-body' },
-        el('div', { class: 'chg-detail' }, String(r.change_detail || '—')),
-        el('div', { class: 'chg-meta' },
-          r.reason ? el('span', {}, 'เหตุผล: ' + r.reason) : null,
-          r.expected ? el('span', {}, 'คาดหวัง: ' + r.expected) : null,
-          el('button', {
-            class: 'btn btn-sm btn-ghost', type: 'button',
-            onclick: e => { e.stopPropagation(); Form.load(r); focusForm(); }
-          }, r.reason ? '✎ แก้ไข' : '＋ ใส่เหตุผล')))));
+/** กล่องรวมการปรับที่ไม่ได้นับของวันนั้น */
+function calMinorBox(minor) {
+  const box = el('details', { class: 'cal-minor-box' });
+  const n = minor.reduce((s, i) => s + i.count, 0);
+  box.append(el('summary', {}, `การปรับที่ไม่ได้นับเป็นจุดวัดผลวันนี้ ${n} รายการ`));
+  for (const it of minor) {
+    const list = el('div', { class: 'cmb-group' },
+      el('div', { class: 'cmb-head' }, `${it.campaign} · ${it.label} (${it.count})`));
+    for (const c of it.changes.slice(0, 20)) {
+      list.append(el('div', { class: 'cmb-line' }, String(c.detail || '')));
+    }
+    for (const r of it.recs) {
+      list.append(el('div', { class: 'cmb-line' }, String(r.change_detail || '')));
+    }
+    if (it.changes.length > 20) {
+      list.append(el('div', { class: 'cmb-line' }, `… และอีก ${it.changes.length - 20} รายการ`));
+    }
+    box.append(list);
   }
-  for (const ch of cell.changes.slice(0, 60)) {
-    list.append(el('div', { class: 'chg-row' },
-      el('span', { class: 'chg-time' }, timeOfChange(ch)),
-      el('div', { class: 'chg-body' },
-        el('div', { class: 'chg-detail' }, String(ch.detail || '')),
-        el('div', { class: 'chg-meta' },
-          ch.ad_group ? el('span', {}, 'กลุ่ม: ' + ch.ad_group) : null,
-          ch.changed_by ? el('span', {}, 'โดย ' + ch.changed_by) : null,
-          el('button', {
-            class: 'btn btn-sm btn-ghost', type: 'button',
-            onclick: e => { e.stopPropagation(); logDraftFromChange(ch); }
-          }, '＋ จดเป็นบันทึก')))));
-  }
-  if (cell.changes.length > 60) {
-    list.append(el('p', { class: 'card-note' },
-      `แสดง 60 รายการแรกจาก ${cell.changes.length}`));
-  }
-  box.append(list);
   return box;
-}
-
-/** เอารายการจาก Google Ads ไปเปิดเป็นร่างบันทึกใหม่ */
-function logDraftFromChange(ch) {
-  Form.draft({
-    date: ch.date,
-    campaign: ch.campaign,
-    tag: CHANGE_CAT_TO_TAG[String(ch.category || 'other')] || 'อื่น ๆ',
-    detail: String(ch.detail || ''),
-    key: ''
-  });
-  if (!$('#f_change_detail').value.trim()) $('#f_change_detail').value = String(ch.detail || '');
-  focusForm();
-  toast('เติมรายละเอียดจาก Google Ads ให้แล้ว — เหลือใส่เหตุผลกับผลที่คาดหวัง', 4200);
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -8244,7 +8203,7 @@ function refreshAll() {
   Form.buildTaxonomySelects();
   Form.refreshCampaignList();
   syncCampaignSelects();
-  if (!$('#panel-data').hidden) { renderFeatureToggles(); renderTaxonomyEditor(); renderConnStatusBox(); }
+  if (!$('#panel-data').hidden) { renderFeatureToggles(); renderMeasureCats(); renderTaxonomyEditor(); renderConnStatusBox(); }
   if (!$('#panel-new').hidden) { renderInbox(); renderTimeline(); }
   if (!$('#panel-dashboard').hidden) renderDashboard();
   if (!$('#panel-spend').hidden) renderSpendPage();
